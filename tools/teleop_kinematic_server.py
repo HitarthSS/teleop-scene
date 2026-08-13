@@ -132,6 +132,17 @@ def snap_grasp_to_thread(runtime, query):
     return idx
 
 
+def select_thread_index(runtime, idx):
+    n = len(runtime["thread_state"])
+    idx = int(np.clip(int(idx), 0, n - 1))
+    runtime["target_idx"] = idx
+    runtime["drag_reference"] = np.asarray(runtime["thread_state"], dtype=np.float64).copy()
+    runtime["home_target"] = runtime["drag_reference"][idx].copy()
+    runtime["target"] = runtime["home_target"].copy()
+    runtime["snap_distance"] = 0.0
+    return idx
+
+
 def update_runtime(runtime, command, args):
     if command.get("subscribe"):
         return bool(runtime.get("last_grip", False)), float(runtime.get("last_jaw", 1.0))
@@ -140,9 +151,16 @@ def update_runtime(runtime, command, args):
         runtime["thread_state"] = runtime["thread_initial"].copy()
         runtime["drag_reference"] = runtime["thread_initial"].copy()
         runtime["current_values"] = dict(runtime["base_values"])
+        runtime["home_target"] = runtime["thread_initial"][runtime["target_idx"]].copy()
         runtime["target"] = runtime["home_target"].copy()
+        runtime["snap_distance"] = 0.0
 
     previous_grip = bool(runtime.get("last_grip", False))
+    if "target_thread_idx" in command:
+        select_thread_index(runtime, command["target_thread_idx"])
+    elif "select_index_delta" in command:
+        select_thread_index(runtime, int(runtime["target_idx"]) + int(command["select_index_delta"]))
+
     if "target_newton" in command:
         runtime["target"] = np.asarray(command["target_newton"], dtype=np.float64).reshape(3)
     elif "delta_newton" in command:
@@ -152,7 +170,9 @@ def update_runtime(runtime, command, args):
     jaw = clamp01(command.get("jaw", 1.0))
     if grip:
         jaw = min(jaw, args.grip_jaw_open_fraction)
-    if grip and (command.get("snap_grip") or (args.snap_on_grip and not previous_grip)):
+    if grip and command.get("snap_selected"):
+        select_thread_index(runtime, int(runtime["target_idx"]))
+    elif grip and (command.get("snap_grip") or (args.snap_on_grip and not previous_grip)):
         snap_grasp_to_thread(runtime, runtime["target"])
 
     runtime["current_values"] = solve_ik_to_target(

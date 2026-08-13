@@ -25,20 +25,23 @@ def draw(stdscr, args, delta, grip, step, state, received):
     stdscr.addstr(0, 0, "Keyboard Teleop -> Newton Thread Server")
     stdscr.addstr(2, 0, "Controls")
     stdscr.addstr(3, 2, "a/d: x -/+        w/s: y +/-        q/e: z +/-")
-    stdscr.addstr(4, 2, "space: toggle grasp/close jaw")
-    stdscr.addstr(5, 2, "r: reset/recenter delta        +/-: step size        x: zero delta        Esc: quit")
-    stdscr.addstr(7, 0, f"server: {args.server_host}:{args.server_port}")
-    stdscr.addstr(8, 0, f"delta_newton [m]: [{delta[0]: .5f}, {delta[1]: .5f}, {delta[2]: .5f}]")
-    stdscr.addstr(9, 0, f"grip: {grip}   jaw: {0.02 if grip else 1.0:.2f}   step: {step:.5f} m")
-    stdscr.addstr(10, 0, f"received packets: {received}")
+    stdscr.addstr(4, 2, "[/]: select thread point      {/}: jump 5 thread points")
+    stdscr.addstr(5, 2, "space: grab selected point/close jaw")
+    stdscr.addstr(6, 2, "r: reset/recenter delta        +/-: step size        x: zero delta        Esc: quit")
+    stdscr.addstr(8, 0, f"server: {args.server_host}:{args.server_port}")
+    stdscr.addstr(9, 0, f"delta_newton [m]: [{delta[0]: .5f}, {delta[1]: .5f}, {delta[2]: .5f}]")
+    stdscr.addstr(10, 0, f"grip: {grip}   jaw: {0.02 if grip else 1.0:.2f}   step: {step:.5f} m")
+    stdscr.addstr(11, 0, f"received packets: {received}")
     if state:
         perf = state.get("perf", {})
-        stdscr.addstr(12, 0, f"server seq: {state.get('seq')}   nodes: {len(state.get('thread_nodes_newton', []))}")
-        stdscr.addstr(13, 0, f"target displacement: {state.get('target_displacement_m', 0.0):.5f} m")
-        stdscr.addstr(14, 0, f"server update: {1000.0 * perf.get('update_seconds', 0.0):.3f} ms")
-        stdscr.addstr(15, 0, f"target_newton: {state.get('target_newton')}")
-        stdscr.addstr(16, 0, f"jaw_grasp_newton: {state.get('jaw_grasp_newton')}")
-        stdscr.addstr(17, 0, f"last snap distance: {state.get('snap_distance_m', 0.0):.5f} m")
+        nodes = len(state.get("thread_nodes_newton", []))
+        idx = state.get("target_thread_idx")
+        stdscr.addstr(13, 0, f"server seq: {state.get('seq')}   selected thread idx: {idx}/{max(nodes - 1, 0)}")
+        stdscr.addstr(14, 0, f"target displacement: {state.get('target_displacement_m', 0.0):.5f} m")
+        stdscr.addstr(15, 0, f"server update: {1000.0 * perf.get('update_seconds', 0.0):.3f} ms")
+        stdscr.addstr(16, 0, f"target_newton: {state.get('target_newton')}")
+        stdscr.addstr(17, 0, f"jaw_grasp_newton: {state.get('jaw_grasp_newton')}")
+        stdscr.addstr(18, 0, f"last snap distance: {state.get('snap_distance_m', 0.0):.5f} m")
     else:
         stdscr.addstr(12, 0, "No server state received yet.")
     stdscr.refresh()
@@ -56,7 +59,8 @@ def run(stdscr, args):
     delta = np.zeros(3, dtype=np.float64)
     step = float(args.step)
     grip = False
-    snap_grip = False
+    snap_selected = False
+    select_index_delta = 0
     rezero_after_send = False
     seq = 0
     state = None
@@ -73,8 +77,20 @@ def run(stdscr, args):
             if key == ord(" "):
                 grip = not grip
                 if grip:
-                    snap_grip = True
+                    snap_selected = True
                     rezero_after_send = True
+            elif key == ord("["):
+                select_index_delta -= 1
+                delta[:] = 0.0
+            elif key == ord("]"):
+                select_index_delta += 1
+                delta[:] = 0.0
+            elif key == ord("{"):
+                select_index_delta -= 5
+                delta[:] = 0.0
+            elif key == ord("}"):
+                select_index_delta += 5
+                delta[:] = 0.0
             elif key in (ord("+"), ord("=")):
                 step = min(step * 2.0, args.max_step)
             elif key in (ord("-"), ord("_")):
@@ -106,10 +122,13 @@ def run(stdscr, args):
             "grip": bool(grip),
             "jaw": 0.02 if grip else 1.0,
             "delta_newton": delta.round(7).tolist(),
-            "snap_grip": bool(snap_grip),
+            "snap_selected": bool(snap_selected),
         }
+        if select_index_delta:
+            command["select_index_delta"] = int(select_index_delta)
         sock.sendto(json.dumps(command, separators=(",", ":")).encode("utf-8"), server)
-        snap_grip = False
+        snap_selected = False
+        select_index_delta = 0
         if rezero_after_send:
             delta[:] = 0.0
             rezero_after_send = False
