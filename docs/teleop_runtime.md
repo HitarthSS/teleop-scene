@@ -27,6 +27,10 @@ without the cable solver exploding.
   - small Python client for testing without VR
   - sends a reach/grip/drag command sequence
 
+- `tools/keyboard_teleop_client.py`
+  - host-side interactive keyboard controller
+  - sends `delta_newton`, `jaw`, and `grip` commands to the UDP server
+
 - `tools/oculus_reader_teleop_client.py`
   - host-side bridge from `rail-berkeley/oculus_reader` to the UDP server
   - reads Quest controller transforms/buttons
@@ -95,6 +99,38 @@ Expected output:
 ```text
 t=... grip=True disp=0.01...m update=...ms nodes=64
 sent=... received=...
+```
+
+## Use Keyboard Input
+
+Keep the Newton teleop server running in one terminal. In a second terminal on
+the same computer:
+
+```bash
+cd ~/Desktop/teleop-scene
+
+python3 tools/keyboard_teleop_client.py \
+  --server-host 127.0.0.1 \
+  --server-port 8765
+```
+
+Controls:
+
+```text
+a/d      x -/+
+w/s      y +/-
+q/e      z +/-
+space    toggle grasp / close jaw
+r        reset/recenter
+x        zero motion delta
++/-      increase/decrease step size
+Esc      quit
+```
+
+The client sends the same UDP command protocol as Oculus/Unity:
+
+```json
+{"grip": true, "jaw": 0.02, "delta_newton": [0.01, 0.0, 0.005]}
 ```
 
 ## Use OculusReader Instead Of Unity
