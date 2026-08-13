@@ -27,6 +27,11 @@ without the cable solver exploding.
   - small Python client for testing without VR
   - sends a reach/grip/drag command sequence
 
+- `tools/oculus_reader_teleop_client.py`
+  - host-side bridge from `rail-berkeley/oculus_reader` to the UDP server
+  - reads Quest controller transforms/buttons
+  - sends `delta_newton`, `jaw`, and `grip` commands
+
 - `scripts/run_teleop_kinematic_server_docker.sh`
   - Docker wrapper for the server
 
@@ -90,6 +95,88 @@ Expected output:
 ```text
 t=... grip=True disp=0.01...m update=...ms nodes=64
 sent=... received=...
+```
+
+## Use OculusReader Instead Of Unity
+
+This path uses the Berkeley OculusReader project:
+
+```text
+https://github.com/rail-berkeley/oculus_reader
+```
+
+OculusReader must run on the host computer, not inside the Newton Docker
+container, because it needs ADB access to the Quest headset.
+
+Install host dependencies:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y android-tools-adb
+python3 -m pip install git+https://github.com/rail-berkeley/oculus_reader.git
+```
+
+The upstream README says active Quest 3 support has moved to this fork:
+
+```bash
+python3 -m pip install git+https://github.com/jborbik/oculus_reader.git
+```
+
+Use one or the other. Start with the `rail-berkeley` package; if the Quest 3
+does not stream correctly, switch to the `jborbik` fork.
+
+Quest setup:
+
+1. Enable Developer Mode in the Meta Quest mobile app.
+2. Connect the headset to the computer with USB-C.
+3. Put on the headset and accept USB debugging.
+4. Verify ADB:
+
+```bash
+adb devices
+```
+
+You should see a device listed as `device`, not `unauthorized`.
+
+Keep the Newton teleop server running in one terminal. In a second terminal,
+run:
+
+```bash
+cd ~/Desktop/teleop-scene
+
+python3 tools/oculus_reader_teleop_client.py \
+  --server-host 127.0.0.1 \
+  --server-port 8765 \
+  --hand right \
+  --rate-hz 60 \
+  --position-scale 0.10
+```
+
+Controls:
+
+- hold controller grip: move/clutch the simulated gripper
+- trigger: close/grasp the thread
+- A/B/right joystick press: recenter controller origin
+
+If the movement direction feels wrong, change the axis map:
+
+```bash
+python3 tools/oculus_reader_teleop_client.py --axis-map x,z,-y
+python3 tools/oculus_reader_teleop_client.py --axis-map x,-z,y
+python3 tools/oculus_reader_teleop_client.py --axis-map -x,z,-y
+```
+
+Wireless ADB option after USB setup:
+
+```bash
+adb shell ip route
+adb tcpip 5555
+```
+
+Find the Quest IP after `src`, then run:
+
+```bash
+python3 tools/oculus_reader_teleop_client.py --oculus-ip QUEST_IP_ADDRESS
 ```
 
 ## UDP Command Protocol
