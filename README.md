@@ -8,6 +8,7 @@ For the Oculus/Quest teleop path, see:
 - `tools/teleop_kinematic_server.py`
 - `tools/teleop_mock_client.py`
 - `scripts/run_teleop_kinematic_server_docker.sh`
+- https://docs.google.com/document/d/18-gQSF_ZmOJSgIifxC1ny1YJScWdx4izICGGSh_u3Y8/edit?usp=sharing
 
 This runtime is separate from the offline USD/OBJ export pipeline. It streams
 thread nodes and gripper state over UDP so a Unity/OpenXR frontend can control
