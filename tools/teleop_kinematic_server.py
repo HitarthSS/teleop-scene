@@ -26,6 +26,7 @@ import numpy as np
 from animate_psm_robot_with_thread_contact import (
     choose_grasp_points,
     jaw_grasp_point_newton,
+    jaw_visual_clouds_newton,
     kinematic_drag_thread,
     solve_ik_to_target,
 )
@@ -94,7 +95,9 @@ def load_scene(args):
         "target_idx": int(target_idx),
         "home_target": np.asarray(target, dtype=np.float64),
         "target": np.asarray(target, dtype=np.float64),
+        "attached": False,
         "snap_distance": 0.0,
+        "grasp_candidate_distance": float("inf"),
         "start_surface_dist": float(start_dist),
         "ik_args": ik_args,
         "ee_link": ee_link,
@@ -131,6 +134,116 @@ def nearest_thread_index(thread_state, query):
     return int(np.argmin(np.linalg.norm(thread_state - query, axis=1)))
 
 
+def closest_point_on_segment(point, a, b):
+    point = np.asarray(point, dtype=np.float64).reshape(3)
+    a = np.asarray(a, dtype=np.float64).reshape(3)
+    b = np.asarray(b, dtype=np.float64).reshape(3)
+    ab = b - a
+    denom = float(np.dot(ab, ab))
+    if denom < 1.0e-14:
+        return a.copy(), 0.0
+    t = float(np.clip(np.dot(point - a, ab) / denom, 0.0, 1.0))
+    return a + t * ab, t
+
+
+def closest_segment_points(a0, a1, b0, b1):
+    """Return closest points between two 3-D segments and their distance."""
+    a0 = np.asarray(a0, dtype=np.float64).reshape(3)
+    a1 = np.asarray(a1, dtype=np.float64).reshape(3)
+    b0 = np.asarray(b0, dtype=np.float64).reshape(3)
+    b1 = np.asarray(b1, dtype=np.float64).reshape(3)
+    u = a1 - a0
+    v = b1 - b0
+    w = a0 - b0
+    aa = float(np.dot(u, u))
+    bb = float(np.dot(v, v))
+    ab = float(np.dot(u, v))
+    aw = float(np.dot(u, w))
+    bw = float(np.dot(v, w))
+    denom = aa * bb - ab * ab
+
+    if aa < 1.0e-14 and bb < 1.0e-14:
+        pa, pb = a0, b0
+    elif aa < 1.0e-14:
+        pb, _ = closest_point_on_segment(a0, b0, b1)
+        pa = a0
+    elif bb < 1.0e-14:
+        pa, _ = closest_point_on_segment(b0, a0, a1)
+        pb = b0
+    else:
+        s = 0.0 if abs(denom) < 1.0e-14 else np.clip((ab * bw - bb * aw) / denom, 0.0, 1.0)
+        t = np.clip((ab * s + bw) / bb, 0.0, 1.0)
+        s = np.clip((ab * t - aw) / aa, 0.0, 1.0)
+        pa = a0 + s * u
+        pb = b0 + t * v
+    return pa, pb, float(np.linalg.norm(pa - pb))
+
+
+def jaw_aperture_segment(runtime, values):
+    fk = forward_kinematics(runtime["links"], runtime["joints"], values)
+    clouds = jaw_visual_clouds_newton(
+        runtime["links"],
+        fk,
+        runtime["cam_to_base"],
+        runtime["jaw_link_regex"],
+    )
+    target = np.asarray(runtime["target"], dtype=np.float64).reshape(1, 3)
+    jaw_points = []
+    for link, _local_pts, world_pts in clouds:
+        world_pts = np.asarray(world_pts, dtype=np.float64)
+        if len(world_pts) == 0:
+            continue
+        idx = int(np.argmin(np.linalg.norm(world_pts - target, axis=1)))
+        jaw_points.append((link, world_pts[idx]))
+    if len(jaw_points) < 2:
+        point = jaw_grasp_point_newton(runtime["selected_grasp_points"], fk, runtime["cam_to_base"])
+        return point, point
+    jaw_points = sorted(jaw_points, key=lambda item: item[0])[:2]
+    return np.asarray(jaw_points[0][1], dtype=np.float64), np.asarray(jaw_points[1][1], dtype=np.float64)
+
+
+def nearest_thread_segment_to_aperture(thread_state, aperture_a, aperture_b):
+    thread_state = np.asarray(thread_state, dtype=np.float64)
+    best = {
+        "distance": float("inf"),
+        "index": 0,
+        "thread_point": thread_state[0].copy(),
+    }
+    for i in range(len(thread_state) - 1):
+        thread_point, _jaw_point, distance = closest_segment_points(
+            thread_state[i],
+            thread_state[i + 1],
+            aperture_a,
+            aperture_b,
+        )
+        if distance < best["distance"]:
+            nearest_node = i if np.linalg.norm(thread_state[i] - thread_point) <= np.linalg.norm(thread_state[i + 1] - thread_point) else i + 1
+            best = {
+                "distance": float(distance),
+                "index": int(nearest_node),
+                "thread_point": thread_state[int(nearest_node)].copy(),
+            }
+    return best
+
+
+def try_attach_thread_inside_open_jaw(runtime, values_open, args):
+    aperture_a, aperture_b = jaw_aperture_segment(runtime, values_open)
+    hit = nearest_thread_segment_to_aperture(runtime["thread_state"], aperture_a, aperture_b)
+    runtime["grasp_candidate_distance"] = float(hit["distance"])
+    if hit["distance"] > float(args.grasp_gate_radius):
+        runtime["attached"] = False
+        runtime["snap_distance"] = float(hit["distance"])
+        return False
+
+    runtime["attached"] = True
+    runtime["target_idx"] = int(hit["index"])
+    runtime["drag_reference"] = np.asarray(runtime["thread_state"], dtype=np.float64).copy()
+    runtime["home_target"] = runtime["drag_reference"][runtime["target_idx"]].copy()
+    runtime["target"] = runtime["home_target"].copy()
+    runtime["snap_distance"] = float(hit["distance"])
+    return True
+
+
 def snap_grasp_to_thread(runtime, query):
     idx = nearest_thread_index(runtime["thread_state"], query)
     runtime["target_idx"] = idx
@@ -162,7 +275,9 @@ def update_runtime(runtime, command, args):
         runtime["current_values"] = dict(runtime["base_values"])
         runtime["home_target"] = runtime["thread_initial"][runtime["target_idx"]].copy()
         runtime["target"] = runtime["home_target"].copy()
+        runtime["attached"] = False
         runtime["snap_distance"] = 0.0
+        runtime["grasp_candidate_distance"] = float("inf")
 
     previous_grip = bool(runtime.get("last_grip", False))
     if "target_thread_idx" in command:
@@ -179,12 +294,8 @@ def update_runtime(runtime, command, args):
     jaw = clamp01(command.get("jaw", 1.0))
     if grip:
         jaw = min(jaw, args.grip_jaw_open_fraction)
-    if grip and command.get("snap_selected"):
-        select_thread_index(runtime, int(runtime["target_idx"]))
-    elif grip and (command.get("snap_grip") or (args.snap_on_grip and not previous_grip)):
-        snap_grasp_to_thread(runtime, runtime["target"])
 
-    runtime["current_values"] = solve_ik_to_target(
+    solved_values = solve_ik_to_target(
         runtime["links"],
         runtime["joints"],
         runtime["current_values"],
@@ -193,9 +304,16 @@ def update_runtime(runtime, command, args):
         runtime["target"],
         runtime["ik_args"],
     )
-    runtime["current_values"] = apply_jaw(runtime["current_values"], runtime["base_values"], jaw)
+    values_open = apply_jaw(solved_values, runtime["base_values"], args.grasp_gate_jaw_open_fraction)
 
-    if grip:
+    if not grip:
+        runtime["attached"] = False
+    elif command.get("snap_selected") or command.get("snap_grip") or (args.snap_on_grip and not previous_grip):
+        try_attach_thread_inside_open_jaw(runtime, values_open, args)
+
+    runtime["current_values"] = apply_jaw(solved_values, runtime["base_values"], jaw)
+
+    if grip and runtime.get("attached"):
         runtime["thread_state"] = kinematic_drag_thread(
             runtime["drag_reference"],
             runtime["target_idx"],
@@ -228,6 +346,9 @@ def state_message(runtime, seq, sim_time, grip, jaw, perf):
         "target_newton": runtime["target"].round(7).tolist(),
         "jaw_grasp_newton": jaw_point.round(7).tolist(),
         "snap_distance_m": float(runtime.get("snap_distance", 0.0)),
+        "grasp_candidate_distance_m": float(runtime.get("grasp_candidate_distance", float("inf"))),
+        "grasp_gate_radius_m": float(runtime.get("grasp_gate_radius", 0.0)),
+        "attached": bool(runtime.get("attached", False)),
         "grip": bool(grip),
         "jaw_open_fraction": float(jaw),
         "target_displacement_m": target_disp,
@@ -250,6 +371,8 @@ def main():
     parser.add_argument("--target-thread", choices=("nearest", "nearest-end", "end0", "end1"), default="nearest-end")
     parser.add_argument("--snap-on-grip", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--grasp-points-per-link", type=int, default=16)
+    parser.add_argument("--grasp-gate-radius", type=float, default=0.0015)
+    parser.add_argument("--grasp-gate-jaw-open-fraction", type=float, default=1.0)
     parser.add_argument("--attachment-span", type=int, default=5)
     parser.add_argument("--drag-falloff-nodes", type=float, default=16.0)
     parser.add_argument("--grip-jaw-open-fraction", type=float, default=0.02)
@@ -267,6 +390,8 @@ def main():
     args = parser.parse_args()
 
     runtime = load_scene(args)
+    runtime["jaw_link_regex"] = args.jaw_link_regex
+    runtime["grasp_gate_radius"] = float(args.grasp_gate_radius)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((args.bind_host, int(args.command_port)))
     sock.setblocking(False)
