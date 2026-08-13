@@ -11,6 +11,17 @@ URDF="${URDF:-/workspace/thread_reconstruction/assets/dvrk/psm1_si.urdf}"
 PACKAGE_ROOT="${PACKAGE_ROOT:-/workspace/thread_reconstruction/assets}"
 JOINTS="${JOINTS:-/workspace/thread_reconstruction/thread_with_gripper_pose_frames/episode_0000_inputs/joint_000000.npy}"
 JAW="${JAW:-/workspace/thread_reconstruction/thread_with_gripper_pose_frames/episode_0000_inputs/jaw_000000.npy}"
+VIEWER_CAMERA_SPEED="${VIEWER_CAMERA_SPEED:-0.01}"
+VIEWER_MAX_CAMERA_SPEED="${VIEWER_MAX_CAMERA_SPEED:-0.025}"
+VIEWER_SCROLL_SCALE="${VIEWER_SCROLL_SCALE:-0.15}"
+VIEWER_LOCK_CAMERA_SPEED="${VIEWER_LOCK_CAMERA_SPEED:-true}"
+VIEWER_DISTANCE_SCALE="${VIEWER_DISTANCE_SCALE:-2.8}"
+
+if [[ "$VIEWER_LOCK_CAMERA_SPEED" == "0" || "$VIEWER_LOCK_CAMERA_SPEED" == "false" ]]; then
+  LOCK_CAMERA_SPEED_FLAG="--no-lock-camera-speed"
+else
+  LOCK_CAMERA_SPEED_FLAG="--lock-camera-speed"
+fi
 
 cd "$PROJECT_DIR"
 
@@ -29,4 +40,9 @@ docker run --rm $DOCKER_GPU_ARGS \
     --urdf "$URDF" \
     --package-root "$PACKAGE_ROOT" \
     --joints "$JOINTS" \
-    --jaw "$JAW"
+    --jaw "$JAW" \
+    --camera-speed "$VIEWER_CAMERA_SPEED" \
+    --max-camera-speed "$VIEWER_MAX_CAMERA_SPEED" \
+    "$LOCK_CAMERA_SPEED_FLAG" \
+    --scroll-scale "$VIEWER_SCROLL_SCALE" \
+    --distance-scale "$VIEWER_DISTANCE_SCALE"

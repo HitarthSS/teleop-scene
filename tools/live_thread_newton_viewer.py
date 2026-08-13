@@ -8,6 +8,7 @@ import json
 import math
 import socket
 import time
+import types
 
 import numpy as np
 
@@ -131,6 +132,28 @@ def log_mesh(viewer, wp, name, verts, faces, color, roughness=0.55, metallic=0.0
         viewer.log_mesh(name, points_wp, indices_wp, backface_culling=False)
 
 
+def configure_viewer_navigation(viewer, args):
+    """Tune Newton ViewerGL controls for millimeter-scale scenes."""
+    if hasattr(viewer, "camera_speed"):
+        viewer.camera_speed = float(args.camera_speed)
+
+    original_scroll = getattr(viewer, "on_mouse_scroll", None)
+    if callable(original_scroll) and float(args.scroll_scale) != 1.0:
+        scroll_scale = float(args.scroll_scale)
+
+        def scaled_mouse_scroll(self, x, y, scroll_x, scroll_y):
+            return original_scroll(x, y, scroll_x * scroll_scale, scroll_y * scroll_scale)
+
+        viewer.on_mouse_scroll = types.MethodType(scaled_mouse_scroll, viewer)
+
+
+def clamp_viewer_navigation(viewer, args):
+    if bool(args.lock_camera_speed) and hasattr(viewer, "camera_speed"):
+        viewer.camera_speed = float(args.camera_speed)
+    elif hasattr(viewer, "camera_speed") and args.max_camera_speed is not None:
+        viewer.camera_speed = min(float(viewer.camera_speed), float(args.max_camera_speed))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--server-host", default="127.0.0.1")
@@ -145,6 +168,10 @@ def main():
     parser.add_argument("--point-radius", type=float, default=0.0012)
     parser.add_argument("--distance-scale", type=float, default=2.8)
     parser.add_argument("--fixed-camera", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--camera-speed", type=float, default=0.01)
+    parser.add_argument("--max-camera-speed", type=float, default=0.025)
+    parser.add_argument("--lock-camera-speed", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--scroll-scale", type=float, default=0.15)
     parser.add_argument("--scene-npz", default=None)
     parser.add_argument("--urdf", default=None)
     parser.add_argument("--joints", default=None)
@@ -172,6 +199,7 @@ def main():
     state = model.state()
     viewer = newton.viewer.ViewerGL(width=int(args.width), height=int(args.height), headless=False)
     viewer.set_model(model)
+    configure_viewer_navigation(viewer, args)
 
     latest = None
     last_sub = 0.0
@@ -179,6 +207,12 @@ def main():
     camera_set = False
 
     print(f"Newton ViewerGL subscribing to udp://{args.server_host}:{args.server_port}")
+    print(
+        "Viewer navigation: "
+        f"camera_speed={args.camera_speed} m/s, "
+        f"lock_camera_speed={args.lock_camera_speed}, "
+        f"scroll_scale={args.scroll_scale}"
+    )
     print("Close the Newton viewer window or press Ctrl+C to stop.")
 
     while True:
@@ -211,6 +245,7 @@ def main():
         if not camera_set or not args.fixed_camera:
             pos, pitch, yaw = compute_camera(all_points, args.distance_scale)
             viewer.set_camera(pos=wp.vec3(float(pos[0]), float(pos[1]), float(pos[2])), pitch=float(pitch), yaw=float(yaw))
+            clamp_viewer_navigation(viewer, args)
             camera_set = True
 
         thread_v, thread_f = tube_mesh(nodes, args.thread_radius, args.thread_sides)
@@ -229,6 +264,7 @@ def main():
         for name, verts, faces in robot_meshes:
             log_mesh(viewer, wp, name, verts, faces, color=(0.34, 0.36, 0.37), roughness=0.22, metallic=0.75)
         viewer.end_frame()
+        clamp_viewer_navigation(viewer, args)
         last_draw = now
 
 
