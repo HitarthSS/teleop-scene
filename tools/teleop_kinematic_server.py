@@ -111,13 +111,38 @@ def clamp01(value):
     return max(0.0, min(1.0, float(value)))
 
 
-def apply_jaw(values, base_values, jaw_open_fraction):
+def jaw_joint_names(values, args):
+    markers = tuple(k.strip().lower() for k in str(args.jaw_joint_markers).split(",") if k.strip())
+    out = []
+    for name in values:
+        lname = name.lower()
+        if any(marker in lname for marker in markers):
+            out.append(name)
+    return out
+
+
+def jaw_joint_signs(names, base_values):
+    signs = []
+    side = 1.0
+    for name in names:
+        base = float(base_values.get(name, 0.0))
+        if abs(base) > 1.0e-6:
+            signs.append(1.0 if base >= 0.0 else -1.0)
+        else:
+            signs.append(side)
+        side *= -1.0
+    return signs
+
+
+def apply_jaw(values, base_values, jaw_open_fraction, args):
     out = dict(values)
     jaw_open_fraction = clamp01(jaw_open_fraction)
-    for name, base in base_values.items():
-        lname = name.lower()
-        if any(k in lname for k in ("jaw", "gripper", "finger", "scissor")):
-            out[name] = float(base) * jaw_open_fraction
+    open_angle = float(args.jaw_open_angle)
+    closed_angle = float(args.jaw_closed_angle)
+    angle = closed_angle + jaw_open_fraction * (open_angle - closed_angle)
+    names = jaw_joint_names(out, args)
+    for name, sign in zip(names, jaw_joint_signs(names, base_values)):
+        out[name] = float(sign * angle)
     return out
 
 
@@ -301,16 +326,22 @@ def update_runtime(runtime, command, args):
     if grip:
         jaw = min(jaw, args.grip_jaw_open_fraction)
 
+    ik_seed_values = apply_jaw(
+        runtime["current_values"],
+        runtime["base_values"],
+        args.grasp_gate_jaw_open_fraction,
+        args,
+    )
     solved_values = solve_ik_to_target(
         runtime["links"],
         runtime["joints"],
-        runtime["current_values"],
+        ik_seed_values,
         runtime["selected_grasp_points"],
         runtime["cam_to_base"],
         runtime["target"],
         runtime["ik_args"],
     )
-    values_open = apply_jaw(solved_values, runtime["base_values"], args.grasp_gate_jaw_open_fraction)
+    values_open = apply_jaw(solved_values, runtime["base_values"], args.grasp_gate_jaw_open_fraction, args)
 
     if not grip:
         runtime["attached"] = False
@@ -322,7 +353,7 @@ def update_runtime(runtime, command, args):
     ):
         try_attach_thread_inside_open_jaw(runtime, values_open, args)
 
-    runtime["current_values"] = apply_jaw(solved_values, runtime["base_values"], jaw)
+    runtime["current_values"] = apply_jaw(solved_values, runtime["base_values"], jaw, args)
 
     if grip and runtime.get("attached"):
         target_delta = np.asarray(runtime["target"], dtype=np.float64) - np.asarray(
@@ -367,6 +398,8 @@ def state_message(runtime, seq, sim_time, grip, jaw, perf):
         "attached": bool(runtime.get("attached", False)),
         "grip": bool(grip),
         "jaw_open_fraction": float(jaw),
+        "jaw_open_angle": float(runtime.get("jaw_open_angle", 0.0)),
+        "jaw_closed_angle": float(runtime.get("jaw_closed_angle", 0.0)),
         "target_displacement_m": target_disp,
         "thread_nodes_newton": np.asarray(runtime["thread_state"], dtype=np.float64).round(7).tolist(),
         "joint_values": {k: float(v) for k, v in runtime["current_values"].items()},
@@ -392,6 +425,9 @@ def main():
     parser.add_argument("--attachment-span", type=int, default=5)
     parser.add_argument("--drag-falloff-nodes", type=float, default=16.0)
     parser.add_argument("--grip-jaw-open-fraction", type=float, default=0.02)
+    parser.add_argument("--jaw-open-angle", type=float, default=0.75)
+    parser.add_argument("--jaw-closed-angle", type=float, default=0.015)
+    parser.add_argument("--jaw-joint-markers", default="jaw")
     parser.add_argument("--ik-joints", default="yaw,pitch,insertion,roll,wrist_pitch,wrist_yaw")
     parser.add_argument("--ik-iters", type=int, default=16)
     parser.add_argument("--ik-damping", type=float, default=1.0e-5)
@@ -408,6 +444,8 @@ def main():
     runtime = load_scene(args)
     runtime["jaw_link_regex"] = args.jaw_link_regex
     runtime["grasp_gate_radius"] = float(args.grasp_gate_radius)
+    runtime["jaw_open_angle"] = float(args.jaw_open_angle)
+    runtime["jaw_closed_angle"] = float(args.jaw_closed_angle)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((args.bind_host, int(args.command_port)))
     sock.setblocking(False)
