@@ -1,0 +1,22 @@
+[build-system]
+# Tells pip what tools are needed to build your package
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# The metadata about your package
+name = "thread_reconstruction"
+version = "0.1.0"
+description = "A short description of what my package does."
+readme = "README.md"
+requires-python = ">=3.8"
+
+# List the other packages your package needs to run
+dependencies = [
+    "requests>=2.20.0",
+    "numpy",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]  # Look for packages inside the 'src' directory
+include = ["thread_reconstruction*"]  # Only include my_package

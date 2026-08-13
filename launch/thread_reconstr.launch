@@ -1,0 +1,5 @@
+<launch>
+    <node pkg="thread_reconstruction" name="exec_grasp_node" type="exec_grasp_node.py" output="screen"></node>
+    <node pkg="thread_reconstruction" name="record_psm_path_node" type="record_psm_path_node.py" output="screen"></node>
+    <node pkg="thread_reconstruction" name="thread_reconstr_node" type="thread_reconstr_node.py" output="screen"></node>
+</launch>

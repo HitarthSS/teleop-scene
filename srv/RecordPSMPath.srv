@@ -1,0 +1,6 @@
+# request
+bool record
+float64 spacing
+---
+# response
+string response

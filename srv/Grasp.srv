@@ -1,0 +1,5 @@
+# request
+geometry_msgs/PoseStamped graspPoint
+uint8 primitive                           # CAPTURE: 0, GUIDE: 1, GRASP: 2
+---
+# response

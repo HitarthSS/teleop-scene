@@ -1,0 +1,57 @@
+
+keypt_selection.py
+segmentation
+16-73 
+stereo matching on 
+
+75-144 
+cluster == groups around keypoints
+custter_means == keypoints
+
+146-
+breadth first search
+ creates array of sets of adjacent points
+
+keypt_selection returns:
+    img_3d 
+    solid_clusters: clusters around keypoints
+    solid_map: image size of the clusters with pixel value set to the id of each cluster
+    custer_means (keypoints): 
+    adjacents: at index 5, find the adjacents of cluster 5 (index 0), 
+
+
+
+keypt_ordering.py
+ignore lines 10-56:
+has to do with the grow parts
+
+lines 58-99:
+takes the adjacents and creates the thread segments (ordering of keypoints)
+Search to find the end point, begins depth first search starting there
+E: iteraties beginning at end point, goes in direction of frontier(key point) containing node with unexplored neighbors, 
+    updates frontier after finding the closest neighbor, tracks visited keypoints, stops when no more frontiers are added
++add how to handle when it ends with a keypoint with more than 2 neighbors
++ begin search at keypoint of more than 2 neighbors, going in the direction of keypoints with less than 3 neighbors
+E: Seems like segments is redundent? 
+
+
+lines 100 120:
+end point clean up
+
+lines 122-
+
+returns 
+order: list of indexs to order the keypoints
+keypoints: unorder list of the keypoints
+
+
+
+optim.py
+lines 106 solver.solve()
+osqp
+returns result.x 
+E: doesn't currenlty user realitibility, even though it is returned, and qp_out is not used. optim reorders splines 
+
+change line 122, add qp_out.x to return cost of the ordering
+
+-> choose the order with the lowest cost from optim.py
