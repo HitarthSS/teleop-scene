@@ -41,6 +41,7 @@ from render_thread_robot_newton_gl import cam_to_newton_view
 
 ONE_SHOT_COMMAND_KEYS = {
     "reset",
+    "attempt_grasp",
     "snap_grip",
     "snap_selected",
     "target_thread_idx",
@@ -96,6 +97,8 @@ def load_scene(args):
         "home_target": np.asarray(target, dtype=np.float64),
         "target": np.asarray(target, dtype=np.float64),
         "attached": False,
+        "attach_target_reference": np.asarray(target, dtype=np.float64),
+        "attach_thread_reference": np.asarray(target, dtype=np.float64),
         "snap_distance": 0.0,
         "grasp_candidate_distance": float("inf"),
         "start_surface_dist": float(start_dist),
@@ -238,8 +241,8 @@ def try_attach_thread_inside_open_jaw(runtime, values_open, args):
     runtime["attached"] = True
     runtime["target_idx"] = int(hit["index"])
     runtime["drag_reference"] = np.asarray(runtime["thread_state"], dtype=np.float64).copy()
-    runtime["home_target"] = runtime["drag_reference"][runtime["target_idx"]].copy()
-    runtime["target"] = runtime["home_target"].copy()
+    runtime["attach_target_reference"] = np.asarray(runtime["target"], dtype=np.float64).copy()
+    runtime["attach_thread_reference"] = runtime["drag_reference"][runtime["target_idx"]].copy()
     runtime["snap_distance"] = float(hit["distance"])
     return True
 
@@ -248,8 +251,8 @@ def snap_grasp_to_thread(runtime, query):
     idx = nearest_thread_index(runtime["thread_state"], query)
     runtime["target_idx"] = idx
     runtime["drag_reference"] = np.asarray(runtime["thread_state"], dtype=np.float64).copy()
-    runtime["home_target"] = runtime["drag_reference"][idx].copy()
-    runtime["target"] = runtime["home_target"].copy()
+    runtime["attach_target_reference"] = np.asarray(runtime["target"], dtype=np.float64).copy()
+    runtime["attach_thread_reference"] = runtime["drag_reference"][idx].copy()
     runtime["snap_distance"] = float(np.linalg.norm(runtime["target"] - np.asarray(query, dtype=np.float64).reshape(3)))
     return idx
 
@@ -261,6 +264,7 @@ def select_thread_index(runtime, idx):
     runtime["drag_reference"] = np.asarray(runtime["thread_state"], dtype=np.float64).copy()
     runtime["home_target"] = runtime["drag_reference"][idx].copy()
     runtime["target"] = runtime["home_target"].copy()
+    runtime["attached"] = False
     runtime["snap_distance"] = 0.0
     return idx
 
@@ -276,6 +280,8 @@ def update_runtime(runtime, command, args):
         runtime["home_target"] = runtime["thread_initial"][runtime["target_idx"]].copy()
         runtime["target"] = runtime["home_target"].copy()
         runtime["attached"] = False
+        runtime["attach_target_reference"] = runtime["target"].copy()
+        runtime["attach_thread_reference"] = runtime["thread_initial"][runtime["target_idx"]].copy()
         runtime["snap_distance"] = 0.0
         runtime["grasp_candidate_distance"] = float("inf")
 
@@ -308,16 +314,25 @@ def update_runtime(runtime, command, args):
 
     if not grip:
         runtime["attached"] = False
-    elif command.get("snap_selected") or command.get("snap_grip") or (args.snap_on_grip and not previous_grip):
+    elif (
+        command.get("attempt_grasp")
+        or command.get("snap_selected")
+        or command.get("snap_grip")
+        or (args.snap_on_grip and not previous_grip)
+    ):
         try_attach_thread_inside_open_jaw(runtime, values_open, args)
 
     runtime["current_values"] = apply_jaw(solved_values, runtime["base_values"], jaw)
 
     if grip and runtime.get("attached"):
+        target_delta = np.asarray(runtime["target"], dtype=np.float64) - np.asarray(
+            runtime["attach_target_reference"], dtype=np.float64
+        )
+        attached_thread_target = np.asarray(runtime["attach_thread_reference"], dtype=np.float64) + target_delta
         runtime["thread_state"] = kinematic_drag_thread(
             runtime["drag_reference"],
             runtime["target_idx"],
-            runtime["target"],
+            attached_thread_target,
             args.attachment_span,
             args.drag_falloff_nodes,
         )
@@ -345,6 +360,7 @@ def state_message(runtime, seq, sim_time, grip, jaw, perf):
         "target_thread_idx": target_idx,
         "target_newton": runtime["target"].round(7).tolist(),
         "jaw_grasp_newton": jaw_point.round(7).tolist(),
+        "attach_distance_m": float(runtime.get("snap_distance", 0.0)),
         "snap_distance_m": float(runtime.get("snap_distance", 0.0)),
         "grasp_candidate_distance_m": float(runtime.get("grasp_candidate_distance", float("inf"))),
         "grasp_gate_radius_m": float(runtime.get("grasp_gate_radius", 0.0)),
