@@ -35,6 +35,10 @@ without the cable solver exploding.
   - host-side live matplotlib viewer
   - subscribes to the UDP state stream and renders the thread/gripper point
 
+- `tools/live_thread_newton_viewer.py`
+  - Newton ViewerGL live viewer
+  - runs best inside the Docker image with X11/OpenGL access
+
 - `tools/oculus_reader_teleop_client.py`
   - host-side bridge from `rail-berkeley/oculus_reader` to the UDP server
   - reads Quest controller transforms/buttons
@@ -170,6 +174,60 @@ The viewer renders:
 - magenta x: commanded target
 - black point: gripper grasp point
 - red line: grabbed-end trail
+
+## See It Live With Newton ViewerGL
+
+This uses Newton's own OpenGL viewer instead of matplotlib. It needs an X11
+desktop session and a Docker image rebuilt after the ViewerGL dependencies were
+added.
+
+Rebuild the image after pulling the latest code:
+
+```bash
+cd ~/Desktop/teleop-scene
+sudo docker build -t thread-reconstruction-newton:latest -f docker/Dockerfile.newton .
+```
+
+Allow local Docker windows to connect to X11:
+
+```bash
+xhost +local:docker
+```
+
+Use three terminals:
+
+Terminal 1: run the Docker/Newton teleop server.
+
+Terminal 2: run keyboard control.
+
+```bash
+cd ~/Desktop/teleop-scene
+python3 tools/keyboard_teleop_client.py --server-host 127.0.0.1 --server-port 8765
+```
+
+Terminal 3: run Newton ViewerGL.
+
+On a normal NVIDIA Docker setup:
+
+```bash
+cd ~/Desktop/teleop-scene
+bash scripts/run_live_thread_newton_viewer_docker.sh
+```
+
+On the Alienware machine that rejected `--gpus all` and requested
+`--runtime=nvidia`:
+
+```bash
+cd ~/Desktop/teleop-scene
+DOCKER_GPU_ARGS="--runtime=nvidia" \
+bash scripts/run_live_thread_newton_viewer_docker.sh
+```
+
+If X11 blocks the window, rerun:
+
+```bash
+xhost +local:docker
+```
 
 ## Use OculusReader Instead Of Unity
 

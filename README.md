@@ -9,8 +9,10 @@ For the Oculus/Quest teleop path, see:
 - `tools/teleop_mock_client.py`
 - `tools/keyboard_teleop_client.py`
 - `tools/live_thread_viewer.py`
+- `tools/live_thread_newton_viewer.py`
 - `tools/oculus_reader_teleop_client.py`
 - `scripts/run_teleop_kinematic_server_docker.sh`
+- `scripts/run_live_thread_newton_viewer_docker.sh`
 - https://docs.google.com/document/d/18-gQSF_ZmOJSgIifxC1ny1YJScWdx4izICGGSh_u3Y8/edit?usp=sharing
 
 This runtime is separate from the offline USD/OBJ export pipeline. It streams
