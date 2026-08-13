@@ -75,6 +75,7 @@ def load_scene(args):
         "scene": scene,
         "thread_initial": thread_newton,
         "thread_state": thread_newton.copy(),
+        "drag_reference": thread_newton.copy(),
         "links": links,
         "joints": joints,
         "base_values": base_values,
@@ -84,6 +85,7 @@ def load_scene(args):
         "target_idx": int(target_idx),
         "home_target": np.asarray(target, dtype=np.float64),
         "target": np.asarray(target, dtype=np.float64),
+        "snap_distance": 0.0,
         "start_surface_dist": float(start_dist),
         "ik_args": ik_args,
         "ee_link": ee_link,
@@ -114,15 +116,33 @@ def parse_command(data):
     return msg, None
 
 
+def nearest_thread_index(thread_state, query):
+    thread_state = np.asarray(thread_state, dtype=np.float64)
+    query = np.asarray(query, dtype=np.float64).reshape(1, 3)
+    return int(np.argmin(np.linalg.norm(thread_state - query, axis=1)))
+
+
+def snap_grasp_to_thread(runtime, query):
+    idx = nearest_thread_index(runtime["thread_state"], query)
+    runtime["target_idx"] = idx
+    runtime["drag_reference"] = np.asarray(runtime["thread_state"], dtype=np.float64).copy()
+    runtime["home_target"] = runtime["drag_reference"][idx].copy()
+    runtime["target"] = runtime["home_target"].copy()
+    runtime["snap_distance"] = float(np.linalg.norm(runtime["target"] - np.asarray(query, dtype=np.float64).reshape(3)))
+    return idx
+
+
 def update_runtime(runtime, command, args):
     if command.get("subscribe"):
         return bool(runtime.get("last_grip", False)), float(runtime.get("last_jaw", 1.0))
 
     if command.get("reset"):
         runtime["thread_state"] = runtime["thread_initial"].copy()
+        runtime["drag_reference"] = runtime["thread_initial"].copy()
         runtime["current_values"] = dict(runtime["base_values"])
         runtime["target"] = runtime["home_target"].copy()
 
+    previous_grip = bool(runtime.get("last_grip", False))
     if "target_newton" in command:
         runtime["target"] = np.asarray(command["target_newton"], dtype=np.float64).reshape(3)
     elif "delta_newton" in command:
@@ -132,6 +152,8 @@ def update_runtime(runtime, command, args):
     jaw = clamp01(command.get("jaw", 1.0))
     if grip:
         jaw = min(jaw, args.grip_jaw_open_fraction)
+    if grip and (command.get("snap_grip") or (args.snap_on_grip and not previous_grip)):
+        snap_grasp_to_thread(runtime, runtime["target"])
 
     runtime["current_values"] = solve_ik_to_target(
         runtime["links"],
@@ -146,7 +168,7 @@ def update_runtime(runtime, command, args):
 
     if grip:
         runtime["thread_state"] = kinematic_drag_thread(
-            runtime["thread_initial"],
+            runtime["drag_reference"],
             runtime["target_idx"],
             runtime["target"],
             args.attachment_span,
@@ -171,6 +193,7 @@ def state_message(runtime, seq, sim_time, grip, jaw, perf):
         "target_thread_idx": target_idx,
         "target_newton": runtime["target"].round(7).tolist(),
         "jaw_grasp_newton": jaw_point.round(7).tolist(),
+        "snap_distance_m": float(runtime.get("snap_distance", 0.0)),
         "grip": bool(grip),
         "jaw_open_fraction": float(jaw),
         "target_displacement_m": target_disp,
@@ -191,6 +214,7 @@ def main():
     parser.add_argument("--state-index", type=int, default=0)
     parser.add_argument("--jaw-link-regex", default="sca_ee_link_1|sca_ee_link_2|ee_link_1|ee_link_2")
     parser.add_argument("--target-thread", choices=("nearest", "nearest-end", "end0", "end1"), default="nearest-end")
+    parser.add_argument("--snap-on-grip", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--grasp-points-per-link", type=int, default=16)
     parser.add_argument("--attachment-span", type=int, default=5)
     parser.add_argument("--drag-falloff-nodes", type=float, default=16.0)

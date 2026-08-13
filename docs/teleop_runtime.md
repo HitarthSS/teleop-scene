@@ -141,6 +141,11 @@ The client sends the same UDP command protocol as Oculus/Unity:
 {"grip": true, "jaw": 0.02, "delta_newton": [0.01, 0.0, 0.005]}
 ```
 
+When `space` turns grasp on, the server snaps the grasp target to the nearest
+thread node to the current magenta target. This means you can grab any part of
+the thread, not only an endpoint. After the snap, keyboard motion is rebased so
+the next key presses drag from the snapped point.
+
 ## See It Live
 
 Use three terminals:

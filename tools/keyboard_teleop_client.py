@@ -38,6 +38,7 @@ def draw(stdscr, args, delta, grip, step, state, received):
         stdscr.addstr(14, 0, f"server update: {1000.0 * perf.get('update_seconds', 0.0):.3f} ms")
         stdscr.addstr(15, 0, f"target_newton: {state.get('target_newton')}")
         stdscr.addstr(16, 0, f"jaw_grasp_newton: {state.get('jaw_grasp_newton')}")
+        stdscr.addstr(17, 0, f"last snap distance: {state.get('snap_distance_m', 0.0):.5f} m")
     else:
         stdscr.addstr(12, 0, "No server state received yet.")
     stdscr.refresh()
@@ -55,6 +56,8 @@ def run(stdscr, args):
     delta = np.zeros(3, dtype=np.float64)
     step = float(args.step)
     grip = False
+    snap_grip = False
+    rezero_after_send = False
     seq = 0
     state = None
     received = 0
@@ -69,6 +72,9 @@ def run(stdscr, args):
                 return
             if key == ord(" "):
                 grip = not grip
+                if grip:
+                    snap_grip = True
+                    rezero_after_send = True
             elif key in (ord("+"), ord("=")):
                 step = min(step * 2.0, args.max_step)
             elif key in (ord("-"), ord("_")):
@@ -100,8 +106,13 @@ def run(stdscr, args):
             "grip": bool(grip),
             "jaw": 0.02 if grip else 1.0,
             "delta_newton": delta.round(7).tolist(),
+            "snap_grip": bool(snap_grip),
         }
         sock.sendto(json.dumps(command, separators=(",", ":")).encode("utf-8"), server)
+        snap_grip = False
+        if rezero_after_send:
+            delta[:] = 0.0
+            rezero_after_send = False
         seq += 1
 
         while True:
