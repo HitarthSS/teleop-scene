@@ -20,17 +20,18 @@ def clamp(value, lo, hi):
     return max(lo, min(hi, value))
 
 
-def draw(stdscr, args, delta, grip, step, state, received):
+def draw(stdscr, args, delta, jaw_open, holding, step, state, received):
     stdscr.erase()
     stdscr.addstr(0, 0, "Keyboard Teleop -> Newton Thread Server")
     stdscr.addstr(2, 0, "Controls")
     stdscr.addstr(3, 2, "a/d: x -/+        w/s: y +/-        q/e: z +/-")
     stdscr.addstr(4, 2, "[/]: select thread point      {/}: jump 5 thread points")
-    stdscr.addstr(5, 2, "space: close/open jaw; attaches only if thread is between jaws")
+    stdscr.addstr(5, 2, "space: open/release claw      g: close/attempt grasp if thread is between jaws")
     stdscr.addstr(6, 2, "r: reset/recenter delta        +/-: step size        x: zero delta        Esc: quit")
     stdscr.addstr(8, 0, f"server: {args.server_host}:{args.server_port}")
     stdscr.addstr(9, 0, f"delta_newton [m]: [{delta[0]: .5f}, {delta[1]: .5f}, {delta[2]: .5f}]")
-    stdscr.addstr(10, 0, f"grip: {grip}   jaw: {0.02 if grip else 1.0:.2f}   step: {step:.5f} m")
+    jaw = 1.0 if jaw_open else 0.0
+    stdscr.addstr(10, 0, f"jaw_open: {jaw_open}   holding: {holding}   jaw: {jaw:.2f}   step: {step:.5f} m")
     stdscr.addstr(11, 0, f"received packets: {received}")
     if state:
         perf = state.get("perf", {})
@@ -61,7 +62,8 @@ def run(stdscr, args):
 
     delta = np.zeros(3, dtype=np.float64)
     step = float(args.step)
-    grip = False
+    jaw_open = True
+    holding = False
     attempt_grasp = False
     select_index_delta = 0
     seq = 0
@@ -77,9 +79,12 @@ def run(stdscr, args):
             if key in (27, ord("Q")):
                 return
             if key == ord(" "):
-                grip = not grip
-                if grip:
-                    attempt_grasp = True
+                jaw_open = True
+                holding = False
+            elif key in (ord("g"), ord("G")):
+                jaw_open = False
+                holding = True
+                attempt_grasp = True
             elif key == ord("["):
                 select_index_delta -= 1
                 delta[:] = 0.0
@@ -120,8 +125,8 @@ def run(stdscr, args):
         command = {
             "type": "teleop",
             "seq": int(seq),
-            "grip": bool(grip),
-            "jaw": 0.02 if grip else 1.0,
+            "grip": bool(holding),
+            "jaw": 1.0 if jaw_open else 0.0,
             "delta_newton": delta.round(7).tolist(),
             "attempt_grasp": bool(attempt_grasp),
         }
@@ -142,7 +147,7 @@ def run(stdscr, args):
 
         now = time.perf_counter()
         if now - last_draw > 1.0 / max(float(args.draw_hz), 1.0):
-            draw(stdscr, args, delta, grip, step, state, received)
+            draw(stdscr, args, delta, jaw_open, holding, step, state, received)
             last_draw = now
 
         sleep_time = dt - (time.perf_counter() - loop_t0)

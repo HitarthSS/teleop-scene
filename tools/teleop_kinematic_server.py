@@ -322,9 +322,10 @@ def update_runtime(runtime, command, args):
         runtime["target"] = runtime["home_target"] + np.asarray(command["delta_newton"], dtype=np.float64).reshape(3)
 
     grip = bool(command.get("grip", False))
-    jaw = clamp01(command.get("jaw", 1.0))
-    if grip:
-        jaw = min(jaw, args.grip_jaw_open_fraction)
+    if "jaw" in command:
+        jaw = clamp01(command.get("jaw", 1.0))
+    else:
+        jaw = args.grip_jaw_open_fraction if grip else 1.0
 
     ik_seed_values = apply_jaw(
         runtime["current_values"],
