@@ -13,12 +13,18 @@ JAW_CLOSED_ANGLE="${JAW_CLOSED_ANGLE:-0.015}"
 JAW_JOINT_MARKERS="${JAW_JOINT_MARKERS:-jaw}"
 
 SCENE_NPZ="${SCENE_NPZ:-/workspace/thread_reconstruction/newton_frame_scene_000000/newton_frame_scene.npz}"
-URDF="${URDF:-/workspace/home/thread_recon_run/assets/dvrk/psm1_si.urdf}"
-PACKAGE_ROOT="${PACKAGE_ROOT:-/workspace/home/thread_recon_run/assets}"
+URDF="${URDF:-/workspace/thread_reconstruction/assets/dvrk/psm1_si.urdf}"
+PACKAGE_ROOT="${PACKAGE_ROOT:-/workspace/thread_reconstruction/assets}"
 JOINTS="${JOINTS:-/workspace/thread_reconstruction/thread_with_gripper_pose_frames/episode_0000_inputs/joint_000000.npy}"
 JAW="${JAW:-/workspace/thread_reconstruction/thread_with_gripper_pose_frames/episode_0000_inputs/jaw_000000.npy}"
 
 cd "$PROJECT_DIR"
+
+if [[ ! -f "assets/dvrk/psm1_si.urdf" ]]; then
+  echo "Missing assets/dvrk/psm1_si.urdf under $PROJECT_DIR" >&2
+  echo "Extract or copy the dVRK assets into this repo before starting the server." >&2
+  exit 1
+fi
 
 docker run --rm $DOCKER_GPU_ARGS \
   --network host \
