@@ -31,6 +31,10 @@ without the cable solver exploding.
   - host-side interactive keyboard controller
   - sends `delta_newton`, `jaw`, and `grip` commands to the UDP server
 
+- `tools/live_thread_viewer.py`
+  - host-side live matplotlib viewer
+  - subscribes to the UDP state stream and renders the thread/gripper point
+
 - `tools/oculus_reader_teleop_client.py`
   - host-side bridge from `rail-berkeley/oculus_reader` to the UDP server
   - reads Quest controller transforms/buttons
@@ -132,6 +136,40 @@ The client sends the same UDP command protocol as Oculus/Unity:
 ```json
 {"grip": true, "jaw": 0.02, "delta_newton": [0.01, 0.0, 0.005]}
 ```
+
+## See It Live
+
+Use three terminals:
+
+Terminal 1: run the Docker/Newton server.
+
+Terminal 2: run keyboard control.
+
+```bash
+cd ~/Desktop/teleop-scene
+python3 tools/keyboard_teleop_client.py --server-host 127.0.0.1 --server-port 8765
+```
+
+Terminal 3: run the live viewer.
+
+```bash
+cd ~/Desktop/teleop-scene
+python3 tools/live_thread_viewer.py --server-host 127.0.0.1 --server-port 8765
+```
+
+If matplotlib is missing:
+
+```bash
+python3 -m pip install matplotlib numpy
+```
+
+The viewer renders:
+
+- blue line: thread
+- cyan/yellow points: thread start/end
+- magenta x: commanded target
+- black point: gripper grasp point
+- red line: grabbed-end trail
 
 ## Use OculusReader Instead Of Unity
 

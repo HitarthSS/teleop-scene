@@ -115,6 +115,9 @@ def parse_command(data):
 
 
 def update_runtime(runtime, command, args):
+    if command.get("subscribe"):
+        return bool(runtime.get("last_grip", False)), float(runtime.get("last_jaw", 1.0))
+
     if command.get("reset"):
         runtime["thread_state"] = runtime["thread_initial"].copy()
         runtime["current_values"] = dict(runtime["base_values"])
@@ -150,6 +153,8 @@ def update_runtime(runtime, command, args):
             args.drag_falloff_nodes,
         )
 
+    runtime["last_grip"] = grip
+    runtime["last_jaw"] = jaw
     return grip, jaw
 
 
@@ -212,7 +217,7 @@ def main():
     seq = 0
     grip = False
     jaw = 1.0
-    client_addr = None
+    clients = {}
     last_command = {}
     start = time.perf_counter()
     next_tick = start
@@ -230,8 +235,9 @@ def main():
             if error:
                 print(f"ignoring command from {addr}: {error}")
                 continue
-            client_addr = addr
-            last_command.update(msg)
+            clients[addr] = time.perf_counter()
+            if not msg.get("subscribe"):
+                last_command.update(msg)
 
         now = time.perf_counter()
         if now < next_tick:
@@ -246,14 +252,17 @@ def main():
             "update_seconds": update_seconds,
             "rate_hz": float(args.rate_hz),
         }
-        if client_addr is not None:
+        if clients:
+            cutoff = time.perf_counter() - 5.0
+            clients = {addr: last_seen for addr, last_seen in clients.items() if last_seen >= cutoff}
             payload = json.dumps(state_message(runtime, seq, sim_time, grip, jaw, perf), separators=(",", ":")).encode(
                 "utf-8"
             )
-            sock.sendto(payload, client_addr)
+            for addr in clients:
+                sock.sendto(payload, addr)
         if args.print_every > 0 and seq % args.print_every == 0:
             print(
-                f"[{seq}] client={client_addr} grip={grip} jaw={jaw:.3f} "
+                f"[{seq}] clients={len(clients)} grip={grip} jaw={jaw:.3f} "
                 f"target_disp={np.linalg.norm(runtime['thread_state'][runtime['target_idx']] - runtime['thread_initial'][runtime['target_idx']]):.4f}m "
                 f"update={update_seconds * 1000.0:.2f}ms"
             )

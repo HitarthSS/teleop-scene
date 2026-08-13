@@ -8,6 +8,7 @@ For the Oculus/Quest teleop path, see:
 - `tools/teleop_kinematic_server.py`
 - `tools/teleop_mock_client.py`
 - `tools/keyboard_teleop_client.py`
+- `tools/live_thread_viewer.py`
 - `tools/oculus_reader_teleop_client.py`
 - `scripts/run_teleop_kinematic_server_docker.sh`
 - https://docs.google.com/document/d/18-gQSF_ZmOJSgIifxC1ny1YJScWdx4izICGGSh_u3Y8/edit?usp=sharing
