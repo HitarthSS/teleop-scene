@@ -12,6 +12,60 @@ import time
 import numpy as np
 
 from export_frame_scene_obj import tube_mesh
+from render_frame_scene_with_psm_urdf import (
+    choose_ee_link,
+    forward_kinematics,
+    joint_values_by_name,
+    load_mesh_instances,
+    parse_urdf,
+    transform_points,
+)
+from render_thread_robot_newton_gl import cam_to_newton_view
+
+
+def load_robot_context(args):
+    if not args.scene_npz or not args.urdf or not args.joints:
+        return None
+    scene = np.load(args.scene_npz, allow_pickle=True)
+    links, joints = parse_urdf(args.urdf, args.package_root)
+    q_recorded = np.load(args.joints)
+    jaw_recorded = np.load(args.jaw) if args.jaw else None
+    base_values = joint_values_by_name(joints, q_recorded, jaw_recorded)
+    fk0 = forward_kinematics(links, joints, base_values)
+    ee_link = choose_ee_link(links, args.ee_link)
+    cam_to_ee = np.asarray(scene["tool_cam_to_ee"], dtype=np.float64)
+    cam_to_base = cam_to_ee @ np.linalg.inv(fk0[ee_link])
+    return {
+        "links": links,
+        "joints": joints,
+        "base_values": base_values,
+        "cam_to_base": cam_to_base,
+    }
+
+
+def robot_meshes_from_state(robot_context, joint_values, args):
+    if robot_context is None:
+        return []
+    values = dict(robot_context["base_values"])
+    for name, value in (joint_values or {}).items():
+        if name in values:
+            values[name] = float(value)
+    fk = forward_kinematics(robot_context["links"], robot_context["joints"], values)
+    meshes = []
+    for i, (verts, faces, transform, link, _mesh_path) in enumerate(
+        load_mesh_instances(
+            robot_context["links"],
+            fk,
+            robot_context["cam_to_base"],
+            include_link=args.include_link_regex,
+            exclude_link=args.exclude_link_regex,
+            include_mesh=args.include_mesh_regex,
+            exclude_mesh=args.exclude_mesh_regex,
+        )
+    ):
+        verts_cam = transform_points(verts, transform)
+        meshes.append((f"/teleop/psm/{i:03d}_{link}", cam_to_newton_view(verts_cam), np.asarray(faces, dtype=np.int32)))
+    return meshes
 
 
 def make_sphere_mesh(center, radius=0.0012, rings=8, sectors=16):
@@ -91,6 +145,16 @@ def main():
     parser.add_argument("--point-radius", type=float, default=0.0012)
     parser.add_argument("--distance-scale", type=float, default=2.8)
     parser.add_argument("--fixed-camera", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--scene-npz", default=None)
+    parser.add_argument("--urdf", default=None)
+    parser.add_argument("--joints", default=None)
+    parser.add_argument("--jaw", default=None)
+    parser.add_argument("--package-root", default=None)
+    parser.add_argument("--ee-link", default="PSM1_tool_wrist_sca_shaft_link")
+    parser.add_argument("--include-link-regex", default=None)
+    parser.add_argument("--exclude-link-regex", default=None)
+    parser.add_argument("--include-mesh-regex", default="tool_wrist|tool_wrist_sca")
+    parser.add_argument("--exclude-mesh-regex", default="tool_main_link")
     args = parser.parse_args()
 
     import newton
@@ -101,6 +165,7 @@ def main():
     sock.bind(("0.0.0.0", int(args.local_port)))
     sock.setblocking(False)
     server = (args.server_host, int(args.server_port))
+    robot_context = load_robot_context(args)
 
     builder = newton.ModelBuilder()
     model = builder.finalize()
@@ -140,7 +205,9 @@ def main():
 
         target = np.asarray(latest.get("target_newton", nodes[0]), dtype=np.float64)
         jaw = np.asarray(latest.get("jaw_grasp_newton", nodes[0]), dtype=np.float64)
-        all_points = np.vstack([nodes, target.reshape(1, 3), jaw.reshape(1, 3)])
+        robot_meshes = robot_meshes_from_state(robot_context, latest.get("joint_values", {}), args)
+        robot_points = np.vstack([mesh[1] for mesh in robot_meshes]) if robot_meshes else np.empty((0, 3))
+        all_points = np.vstack([nodes, target.reshape(1, 3), jaw.reshape(1, 3), robot_points])
         if not camera_set or not args.fixed_camera:
             pos, pitch, yaw = compute_camera(all_points, args.distance_scale)
             viewer.set_camera(pos=wp.vec3(float(pos[0]), float(pos[1]), float(pos[2])), pitch=float(pitch), yaw=float(yaw))
@@ -159,6 +226,8 @@ def main():
         log_mesh(viewer, wp, "/teleop/jaw_grasp", jaw_v, jaw_f, color=(0.02, 0.02, 0.02), roughness=0.3)
         log_mesh(viewer, wp, "/teleop/start", start_v, start_f, color=(0.0, 0.9, 1.0), roughness=0.3)
         log_mesh(viewer, wp, "/teleop/end", end_v, end_f, color=(1.0, 0.85, 0.0), roughness=0.3)
+        for name, verts, faces in robot_meshes:
+            log_mesh(viewer, wp, name, verts, faces, color=(0.34, 0.36, 0.37), roughness=0.22, metallic=0.75)
         viewer.end_frame()
         last_draw = now
 

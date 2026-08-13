@@ -181,6 +181,17 @@ This uses Newton's own OpenGL viewer instead of matplotlib. It needs an X11
 desktop session and a Docker image rebuilt after the ViewerGL dependencies were
 added.
 
+The Newton viewer renders:
+
+- reconstructed thread
+- commanded target point
+- gripper grasp point
+- thread endpoints
+- PSM wrist/jaw STL meshes driven by streamed `joint_values`
+
+It uses the same `newton_frame_scene.npz`, URDF, and joint/jaw input files as
+the teleop server.
+
 Rebuild the image after pulling the latest code:
 
 ```bash
