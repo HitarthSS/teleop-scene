@@ -6,7 +6,7 @@ does not write USD/OBJ frames. It receives target gripper commands over UDP and
 streams compact JSON state messages containing thread nodes and gripper state.
 
 Current behavior is kinematic grasp/drag: when grip is true, the selected
-thread endpoint follows the commanded gripper target with a smooth falloff along
+thread point follows the commanded gripper target with a smooth falloff along
 the cable. This is the stable v0 path for Unity/Quest integration; later it can
 be swapped for a true Newton contact/constraint grasp.
 """
@@ -36,6 +36,15 @@ from render_frame_scene_with_psm_urdf import (
     parse_urdf,
 )
 from render_thread_robot_newton_gl import cam_to_newton_view
+
+
+ONE_SHOT_COMMAND_KEYS = {
+    "reset",
+    "snap_grip",
+    "snap_selected",
+    "target_thread_idx",
+    "select_index_delta",
+}
 
 
 def load_scene(args):
@@ -200,6 +209,11 @@ def update_runtime(runtime, command, args):
     return grip, jaw
 
 
+def clear_one_shot_commands(command):
+    for key in ONE_SHOT_COMMAND_KEYS:
+        command.pop(key, None)
+
+
 def state_message(runtime, seq, sim_time, grip, jaw, perf):
     fk = forward_kinematics(runtime["links"], runtime["joints"], runtime["current_values"])
     jaw_point = jaw_grasp_point_newton(runtime["selected_grasp_points"], fk, runtime["cam_to_base"])
@@ -289,6 +303,7 @@ def main():
 
         t0 = time.perf_counter()
         grip, jaw = update_runtime(runtime, last_command, args)
+        clear_one_shot_commands(last_command)
         update_seconds = time.perf_counter() - t0
         seq += 1
         sim_time = now - start
