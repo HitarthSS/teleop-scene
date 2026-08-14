@@ -121,12 +121,21 @@ def jaw_joint_names(values, args):
     return out
 
 
-def jaw_joint_signs(names, base_values):
+def jaw_joint_signs(names, base_values, args):
+    mode = str(args.jaw_sign_mode).lower()
+    if mode == "same":
+        return [1.0 for _name in names]
+    if mode == "explicit":
+        signs = [float(v.strip()) for v in str(args.jaw_signs).split(",") if v.strip()]
+        if len(signs) != len(names):
+            raise ValueError(f"--jaw-signs needs {len(names)} values for joints {names}; got {signs}")
+        return signs
+
     signs = []
     side = 1.0
     for name in names:
         base = float(base_values.get(name, 0.0))
-        if abs(base) > 1.0e-6:
+        if mode == "base" and abs(base) > 1.0e-6:
             signs.append(1.0 if base >= 0.0 else -1.0)
         else:
             signs.append(side)
@@ -141,7 +150,7 @@ def apply_jaw(values, base_values, jaw_open_fraction, args):
     closed_angle = float(args.jaw_closed_angle)
     angle = closed_angle + jaw_open_fraction * (open_angle - closed_angle)
     names = jaw_joint_names(out, args)
-    for name, sign in zip(names, jaw_joint_signs(names, base_values)):
+    for name, sign in zip(names, jaw_joint_signs(names, base_values, args)):
         out[name] = float(sign * angle)
     return out
 
@@ -432,6 +441,8 @@ def main():
     parser.add_argument("--jaw-open-angle", type=float, default=0.75)
     parser.add_argument("--jaw-closed-angle", type=float, default=0.015)
     parser.add_argument("--jaw-joint-markers", default="jaw_1,jaw_2")
+    parser.add_argument("--jaw-sign-mode", choices=("same", "alternating", "base", "explicit"), default="same")
+    parser.add_argument("--jaw-signs", default="")
     parser.add_argument("--ik-joints", default="yaw,pitch,insertion,roll,wrist_pitch,wrist_yaw")
     parser.add_argument("--ik-iters", type=int, default=16)
     parser.add_argument("--ik-damping", type=float, default=1.0e-5)
@@ -469,6 +480,7 @@ def main():
     if not runtime["jaw_joint_names"]:
         print(f"WARNING: no jaw joints matched --jaw-joint-markers={args.jaw_joint_markers!r}")
     else:
+        print(f"jaw_sign_mode={args.jaw_sign_mode} jaw_signs={jaw_joint_signs(runtime['jaw_joint_names'], runtime['base_values'], args)}")
         open_values = apply_jaw(runtime["base_values"], runtime["base_values"], 1.0, args)
         closed_values = apply_jaw(runtime["base_values"], runtime["base_values"], 0.0, args)
         print("jaw open/closed values:")

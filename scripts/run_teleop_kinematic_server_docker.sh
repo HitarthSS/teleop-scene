@@ -11,6 +11,8 @@ GRASP_GATE_JAW_OPEN_FRACTION="${GRASP_GATE_JAW_OPEN_FRACTION:-1.0}"
 JAW_OPEN_ANGLE="${JAW_OPEN_ANGLE:-0.75}"
 JAW_CLOSED_ANGLE="${JAW_CLOSED_ANGLE:-0.015}"
 JAW_JOINT_MARKERS="${JAW_JOINT_MARKERS:-jaw_1,jaw_2}"
+JAW_SIGN_MODE="${JAW_SIGN_MODE:-same}"
+JAW_SIGNS="${JAW_SIGNS:-}"
 
 SCENE_NPZ="${SCENE_NPZ:-/workspace/thread_reconstruction/newton_frame_scene_000000/newton_frame_scene.npz}"
 URDF="${URDF:-/workspace/thread_reconstruction/assets/dvrk/psm1_si.urdf}"
@@ -45,4 +47,6 @@ docker run --rm $DOCKER_GPU_ARGS \
     --grasp-gate-jaw-open-fraction "$GRASP_GATE_JAW_OPEN_FRACTION" \
     --jaw-open-angle "$JAW_OPEN_ANGLE" \
     --jaw-closed-angle "$JAW_CLOSED_ANGLE" \
-    --jaw-joint-markers "$JAW_JOINT_MARKERS"
+    --jaw-joint-markers "$JAW_JOINT_MARKERS" \
+    --jaw-sign-mode "$JAW_SIGN_MODE" \
+    --jaw-signs "$JAW_SIGNS"
