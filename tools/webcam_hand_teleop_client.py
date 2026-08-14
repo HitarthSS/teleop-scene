@@ -88,6 +88,41 @@ def draw_overlay(cv2, frame, hand_landmarks, status, args):
         cv2.line(frame, p0, p1, color, 2, cv2.LINE_AA)
 
 
+def load_hand_tracking_modules():
+    try:
+        import cv2
+    except ImportError as exc:
+        raise SystemExit(
+            "Missing OpenCV. Install on the host with:\n"
+            "  python3 -m pip install opencv-python"
+        ) from exc
+
+    try:
+        import mediapipe as mp
+    except ImportError as exc:
+        raise SystemExit(
+            "Missing MediaPipe. Install on the host with:\n"
+            "  python3 -m pip install mediapipe\n"
+            "If you are using Python 3.13 and MediaPipe is unavailable/broken, create a Python 3.11 env."
+        ) from exc
+
+    hands_module = getattr(getattr(mp, "solutions", None), "hands", None)
+    if hands_module is None:
+        try:
+            from mediapipe.python.solutions import hands as hands_module
+        except Exception as exc:
+            raise SystemExit(
+                "Installed mediapipe does not expose the legacy Hands API.\n"
+                "Recommended fix on the host:\n"
+                "  conda create -n teleop-hand python=3.11 -y\n"
+                "  conda activate teleop-hand\n"
+                "  python -m pip install opencv-python mediapipe\n"
+                "Then rerun:\n"
+                "  bash scripts/run_webcam_hand_teleop_client.sh"
+            ) from exc
+    return cv2, hands_module
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--server-host", default="127.0.0.1")
@@ -106,15 +141,7 @@ def main():
     parser.add_argument("--print-every", type=int, default=30)
     args = parser.parse_args()
 
-    try:
-        import cv2
-        import mediapipe as mp
-    except ImportError as exc:
-        raise SystemExit(
-            "Missing webcam hand-tracking dependencies. Install on the host with:\n"
-            "  python3 -m pip install opencv-python mediapipe\n"
-            "Then rerun this script outside Docker."
-        ) from exc
+    cv2, mp_hands = load_hand_tracking_modules()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(0.001)
@@ -124,7 +151,7 @@ def main():
     if not cap.isOpened():
         raise SystemExit(f"Could not open webcam index {args.camera_index}")
 
-    hands = mp.solutions.hands.Hands(
+    hands = mp_hands.Hands(
         static_image_mode=False,
         max_num_hands=1,
         model_complexity=1,
