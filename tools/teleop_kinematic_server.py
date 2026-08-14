@@ -401,6 +401,9 @@ def state_message(runtime, seq, sim_time, grip, jaw, perf):
         "jaw_open_fraction": float(jaw),
         "jaw_open_angle": float(runtime.get("jaw_open_angle", 0.0)),
         "jaw_closed_angle": float(runtime.get("jaw_closed_angle", 0.0)),
+        "jaw_joint_values": {
+            name: float(runtime["current_values"].get(name, 0.0)) for name in runtime.get("jaw_joint_names", [])
+        },
         "target_displacement_m": target_disp,
         "thread_nodes_newton": np.asarray(runtime["thread_state"], dtype=np.float64).round(7).tolist(),
         "joint_values": {k: float(v) for k, v in runtime["current_values"].items()},
@@ -428,7 +431,7 @@ def main():
     parser.add_argument("--grip-jaw-open-fraction", type=float, default=0.02)
     parser.add_argument("--jaw-open-angle", type=float, default=0.75)
     parser.add_argument("--jaw-closed-angle", type=float, default=0.015)
-    parser.add_argument("--jaw-joint-markers", default="jaw")
+    parser.add_argument("--jaw-joint-markers", default="jaw_1,jaw_2")
     parser.add_argument("--ik-joints", default="yaw,pitch,insertion,roll,wrist_pitch,wrist_yaw")
     parser.add_argument("--ik-iters", type=int, default=16)
     parser.add_argument("--ik-damping", type=float, default=1.0e-5)
@@ -447,6 +450,7 @@ def main():
     runtime["grasp_gate_radius"] = float(args.grasp_gate_radius)
     runtime["jaw_open_angle"] = float(args.jaw_open_angle)
     runtime["jaw_closed_angle"] = float(args.jaw_closed_angle)
+    runtime["jaw_joint_names"] = jaw_joint_names(runtime["base_values"], args)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((args.bind_host, int(args.command_port)))
     sock.setblocking(False)
@@ -461,6 +465,15 @@ def main():
     next_tick = start
     print(f"teleop server listening on udp://{args.bind_host}:{args.command_port}")
     print(f"target_thread_idx={runtime['target_idx']} home_target_newton={runtime['home_target']}")
+    print(f"jaw_joint_names={runtime['jaw_joint_names']}")
+    if not runtime["jaw_joint_names"]:
+        print(f"WARNING: no jaw joints matched --jaw-joint-markers={args.jaw_joint_markers!r}")
+    else:
+        open_values = apply_jaw(runtime["base_values"], runtime["base_values"], 1.0, args)
+        closed_values = apply_jaw(runtime["base_values"], runtime["base_values"], 0.0, args)
+        print("jaw open/closed values:")
+        for name in runtime["jaw_joint_names"]:
+            print(f"  {name}: open={open_values[name]:.6f} closed={closed_values[name]:.6f}")
     print("send JSON commands with target_newton or delta_newton, jaw, grip")
 
     while True:

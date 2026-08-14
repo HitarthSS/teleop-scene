@@ -46,6 +46,7 @@ def draw(stdscr, args, delta, jaw_open, holding, step, state, received):
         stdscr.addstr(17, 0, f"target_newton: {state.get('target_newton')}")
         stdscr.addstr(18, 0, f"jaw_grasp_newton: {state.get('jaw_grasp_newton')}")
         stdscr.addstr(19, 0, f"last attach distance: {state.get('attach_distance_m', 0.0):.5f} m")
+        stdscr.addstr(20, 0, f"jaw_joint_values: {state.get('jaw_joint_values', {})}")
     else:
         stdscr.addstr(12, 0, "No server state received yet.")
     stdscr.refresh()
