@@ -115,6 +115,69 @@ def compute_camera(points, distance_scale=2.8):
     return pos, pitch, yaw
 
 
+def bounds_center_radius(points, min_radius=0.012):
+    points = np.asarray(points, dtype=np.float64)
+    low = points.min(axis=0)
+    high = points.max(axis=0)
+    center = 0.5 * (low + high)
+    radius = max(float(np.linalg.norm(high - low)) * 0.5, float(min_radius))
+    return center, radius
+
+
+def camera_from_target(center, radius, direction, distance_scale):
+    direction = np.asarray(direction, dtype=np.float64)
+    direction /= max(float(np.linalg.norm(direction)), 1.0e-9)
+    pos = np.asarray(center, dtype=np.float64) + direction * max(float(radius), 1.0e-5) * float(distance_scale)
+    horiz = np.asarray(center[:2], dtype=np.float64) - pos[:2]
+    yaw = math.degrees(math.atan2(horiz[1], horiz[0]))
+    pitch = math.degrees(math.atan2(float(center[2] - pos[2]), max(float(np.linalg.norm(horiz)), 1.0e-6)))
+    return pos, pitch, yaw
+
+
+def compute_camera_preset(mode, all_points, nodes, jaw, capture_a, capture_b, args):
+    mode = str(mode).lower()
+    if mode in ("gripper", "follow"):
+        focus_points = [np.asarray(jaw, dtype=np.float64).reshape(1, 3)]
+        if capture_a.shape == (3,) and capture_b.shape == (3,):
+            focus_points.extend([capture_a.reshape(1, 3), capture_b.reshape(1, 3)])
+        center, radius = bounds_center_radius(np.vstack(focus_points), min_radius=float(args.gripper_camera_radius))
+        direction = np.asarray([0.42, -0.82, 0.48], dtype=np.float64)
+        scale = float(args.gripper_distance_scale)
+    else:
+        center, radius = bounds_center_radius(all_points, min_radius=0.035)
+        if mode == "top":
+            direction = np.asarray([0.04, -0.10, 1.0], dtype=np.float64)
+            scale = float(args.top_distance_scale)
+        elif mode == "side":
+            direction = np.asarray([0.05, -1.0, 0.22], dtype=np.float64)
+            scale = float(args.distance_scale)
+        elif mode == "full":
+            direction = np.asarray([0.78, -1.15, 0.68], dtype=np.float64)
+            scale = float(args.full_distance_scale)
+        else:
+            direction = np.asarray([0.42, -0.82, 0.58], dtype=np.float64)
+            scale = float(args.distance_scale)
+    return camera_from_target(center, radius, direction, scale)
+
+
+def blend_camera(previous, current, alpha):
+    if previous is None:
+        return current
+    alpha = float(np.clip(alpha, 0.0, 1.0))
+    prev_pos, prev_pitch, prev_yaw = previous
+    pos, pitch, yaw = current
+    return (
+        (1.0 - alpha) * np.asarray(prev_pos, dtype=np.float64) + alpha * np.asarray(pos, dtype=np.float64),
+        (1.0 - alpha) * float(prev_pitch) + alpha * float(pitch),
+        (1.0 - alpha) * float(prev_yaw) + alpha * float(yaw),
+    )
+
+
+def set_viewer_camera(viewer, wp, camera):
+    pos, pitch, yaw = camera
+    viewer.set_camera(pos=wp.vec3(float(pos[0]), float(pos[1]), float(pos[2])), pitch=float(pitch), yaw=float(yaw))
+
+
 def log_mesh(viewer, wp, name, verts, faces, color, roughness=0.55, metallic=0.0):
     points_wp = wp.array(np.asarray(verts, dtype=np.float32), dtype=wp.vec3)
     indices_wp = wp.array(np.asarray(faces, dtype=np.int32).reshape(-1), dtype=wp.int32)
@@ -154,6 +217,52 @@ def clamp_viewer_navigation(viewer, args):
         viewer.camera_speed = min(float(viewer.camera_speed), float(args.max_camera_speed))
 
 
+def install_camera_hotkeys(viewer, camera_state):
+    """Install best-effort pyglet hotkeys without depending on Newton internals."""
+    window = None
+    for owner in (viewer, getattr(viewer, "renderer", None)):
+        for attr in ("window", "_window"):
+            candidate = getattr(owner, attr, None) if owner is not None else None
+            if candidate is not None:
+                window = candidate
+                break
+        if window is not None:
+            break
+    if window is None or not hasattr(window, "push_handlers"):
+        return False
+
+    try:
+        from pyglet.window import key
+    except Exception:
+        return False
+
+    key_modes = {}
+    for names, mode in (
+        (("_1", "NUM_1"), "surgical"),
+        (("_2", "NUM_2"), "top"),
+        (("_3", "NUM_3"), "gripper"),
+        (("_4", "NUM_4"), "full"),
+        (("R",), "surgical"),
+        (("F",), "follow"),
+    ):
+        for name in names:
+            symbol = getattr(key, name, None)
+            if symbol is not None:
+                key_modes[symbol] = mode
+
+    def on_key_press(symbol, modifiers):
+        if symbol in key_modes:
+            mode = key_modes[symbol]
+            camera_state["mode"] = mode
+            camera_state["dirty"] = True
+            print(f"camera preset: {mode}")
+            return True
+        return False
+
+    window.push_handlers(on_key_press=on_key_press)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--server-host", default="127.0.0.1")
@@ -171,10 +280,17 @@ def main():
     parser.add_argument("--capture-zone-min-radius", type=float, default=0.0004)
     parser.add_argument("--distance-scale", type=float, default=2.8)
     parser.add_argument("--fixed-camera", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--camera-speed", type=float, default=0.01)
-    parser.add_argument("--max-camera-speed", type=float, default=0.025)
+    parser.add_argument("--camera-mode", choices=("surgical", "top", "side", "gripper", "full", "follow"), default="surgical")
+    parser.add_argument("--camera-follow", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--camera-follow-alpha", type=float, default=0.12)
+    parser.add_argument("--top-distance-scale", type=float, default=2.4)
+    parser.add_argument("--full-distance-scale", type=float, default=3.2)
+    parser.add_argument("--gripper-distance-scale", type=float, default=8.0)
+    parser.add_argument("--gripper-camera-radius", type=float, default=0.012)
+    parser.add_argument("--camera-speed", type=float, default=0.002)
+    parser.add_argument("--max-camera-speed", type=float, default=0.005)
     parser.add_argument("--lock-camera-speed", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--scroll-scale", type=float, default=0.15)
+    parser.add_argument("--scroll-scale", type=float, default=0.03)
     parser.add_argument("--scene-npz", default=None)
     parser.add_argument("--urdf", default=None)
     parser.add_argument("--joints", default=None)
@@ -203,6 +319,8 @@ def main():
     viewer = newton.viewer.ViewerGL(width=int(args.width), height=int(args.height), headless=False)
     viewer.set_model(model)
     configure_viewer_navigation(viewer, args)
+    camera_state = {"mode": str(args.camera_mode), "dirty": True, "current": None}
+    hotkeys_installed = install_camera_hotkeys(viewer, camera_state)
 
     latest = None
     last_sub = 0.0
@@ -214,8 +332,14 @@ def main():
         "Viewer navigation: "
         f"camera_speed={args.camera_speed} m/s, "
         f"lock_camera_speed={args.lock_camera_speed}, "
-        f"scroll_scale={args.scroll_scale}"
+        f"scroll_scale={args.scroll_scale}, "
+        f"camera_mode={args.camera_mode}, "
+        f"camera_follow={args.camera_follow}"
     )
+    if hotkeys_installed:
+        print("Camera hotkeys: 1 surgical, 2 top, 3 gripper close-up, 4 full scene, F follow, R reset")
+    else:
+        print("Camera hotkeys unavailable in this ViewerGL build; use --camera-mode or restart with a preset.")
     print("Close the Newton viewer window or press Ctrl+C to stop.")
 
     while True:
@@ -264,11 +388,29 @@ def main():
             extra_points.append(capture_a.reshape(1, 3))
             extra_points.append(capture_b.reshape(1, 3))
         all_points = np.vstack([nodes, *extra_points])
-        if not camera_set or not args.fixed_camera:
-            pos, pitch, yaw = compute_camera(all_points, args.distance_scale)
-            viewer.set_camera(pos=wp.vec3(float(pos[0]), float(pos[1]), float(pos[2])), pitch=float(pitch), yaw=float(yaw))
+        follow_mode = str(camera_state["mode"]).lower() in ("follow", "gripper")
+        should_update_camera = (
+            not camera_set
+            or camera_state.get("dirty", False)
+            or not args.fixed_camera
+            or (bool(args.camera_follow) and follow_mode)
+        )
+        if should_update_camera:
+            target_camera = compute_camera_preset(
+                camera_state["mode"],
+                all_points,
+                nodes,
+                jaw,
+                capture_a,
+                capture_b,
+                args,
+            )
+            alpha = float(args.camera_follow_alpha) if camera_set and follow_mode else 1.0
+            camera_state["current"] = blend_camera(camera_state.get("current"), target_camera, alpha)
+            set_viewer_camera(viewer, wp, camera_state["current"])
             clamp_viewer_navigation(viewer, args)
             camera_set = True
+            camera_state["dirty"] = False
 
         thread_v, thread_f = tube_mesh(nodes, args.thread_radius, args.thread_sides)
         target_v, target_f = make_sphere_mesh(target, args.point_radius)
