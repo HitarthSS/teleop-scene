@@ -98,7 +98,9 @@ def load_scene(args):
         "target": np.asarray(target, dtype=np.float64),
         "attached": False,
         "attach_target_reference": np.asarray(target, dtype=np.float64),
+        "attach_jaw_reference": np.asarray(target, dtype=np.float64),
         "attach_thread_reference": np.asarray(target, dtype=np.float64),
+        "attach_driver_newton": np.asarray(target, dtype=np.float64),
         "snap_distance": 0.0,
         "grasp_candidate_distance": float("inf"),
         "grasp_candidate_aperture_t": 0.0,
@@ -251,6 +253,11 @@ def jaw_aperture_segment(runtime, values):
     return np.asarray(jaw_points[0][1], dtype=np.float64), np.asarray(jaw_points[1][1], dtype=np.float64)
 
 
+def jaw_driver_point(runtime, values):
+    aperture_a, aperture_b = jaw_aperture_segment(runtime, values)
+    return 0.5 * (np.asarray(aperture_a, dtype=np.float64) + np.asarray(aperture_b, dtype=np.float64))
+
+
 def nearest_thread_segment_to_aperture(thread_state, aperture_a, aperture_b):
     thread_state = np.asarray(thread_state, dtype=np.float64)
     best = {
@@ -288,8 +295,8 @@ def nearest_thread_segment_to_aperture(thread_state, aperture_a, aperture_b):
     return best
 
 
-def try_attach_thread_inside_open_jaw(runtime, values_open, args):
-    aperture_a, aperture_b = jaw_aperture_segment(runtime, values_open)
+def try_attach_thread_inside_open_jaw(runtime, values_gate, values_driver, args):
+    aperture_a, aperture_b = jaw_aperture_segment(runtime, values_gate)
     hit = nearest_thread_segment_to_aperture(runtime["thread_state"], aperture_a, aperture_b)
     runtime["grasp_candidate_distance"] = float(hit["raw_distance"])
     runtime["grasp_candidate_aperture_t"] = float(hit["aperture_t"])
@@ -304,7 +311,9 @@ def try_attach_thread_inside_open_jaw(runtime, values_open, args):
     runtime["target_idx"] = int(hit["index"])
     runtime["drag_reference"] = np.asarray(runtime["thread_state"], dtype=np.float64).copy()
     runtime["attach_target_reference"] = np.asarray(runtime["target"], dtype=np.float64).copy()
+    runtime["attach_jaw_reference"] = jaw_driver_point(runtime, values_driver)
     runtime["attach_thread_reference"] = runtime["drag_reference"][runtime["target_idx"]].copy()
+    runtime["attach_driver_newton"] = runtime["attach_jaw_reference"].copy()
     runtime["snap_distance"] = float(hit["raw_distance"])
     return True
 
@@ -314,7 +323,9 @@ def snap_grasp_to_thread(runtime, query):
     runtime["target_idx"] = idx
     runtime["drag_reference"] = np.asarray(runtime["thread_state"], dtype=np.float64).copy()
     runtime["attach_target_reference"] = np.asarray(runtime["target"], dtype=np.float64).copy()
+    runtime["attach_jaw_reference"] = np.asarray(runtime["target"], dtype=np.float64).copy()
     runtime["attach_thread_reference"] = runtime["drag_reference"][idx].copy()
+    runtime["attach_driver_newton"] = runtime["attach_jaw_reference"].copy()
     runtime["snap_distance"] = float(np.linalg.norm(runtime["target"] - np.asarray(query, dtype=np.float64).reshape(3)))
     return idx
 
@@ -343,7 +354,9 @@ def update_runtime(runtime, command, args):
         runtime["target"] = runtime["home_target"].copy()
         runtime["attached"] = False
         runtime["attach_target_reference"] = runtime["target"].copy()
+        runtime["attach_jaw_reference"] = runtime["target"].copy()
         runtime["attach_thread_reference"] = runtime["thread_initial"][runtime["target_idx"]].copy()
+        runtime["attach_driver_newton"] = runtime["attach_jaw_reference"].copy()
         runtime["snap_distance"] = 0.0
         runtime["grasp_candidate_distance"] = float("inf")
         runtime["grasp_candidate_aperture_t"] = 0.0
@@ -380,7 +393,8 @@ def update_runtime(runtime, command, args):
         runtime["target"],
         runtime["ik_args"],
     )
-    values_open = apply_jaw(solved_values, runtime["base_values"], args.grasp_gate_jaw_open_fraction, args)
+    values_gate = apply_jaw(solved_values, runtime["base_values"], args.grasp_gate_jaw_open_fraction, args)
+    values_current = apply_jaw(solved_values, runtime["base_values"], jaw, args)
 
     if not grip:
         runtime["attached"] = False
@@ -391,15 +405,17 @@ def update_runtime(runtime, command, args):
         or (args.snap_on_grip and not previous_grip)
         or args.grasp_retry_while_holding
     ):
-        try_attach_thread_inside_open_jaw(runtime, values_open, args)
+        try_attach_thread_inside_open_jaw(runtime, values_gate, values_current, args)
 
-    runtime["current_values"] = apply_jaw(solved_values, runtime["base_values"], jaw, args)
+    runtime["current_values"] = values_current
 
     if grip and runtime.get("attached"):
-        target_delta = np.asarray(runtime["target"], dtype=np.float64) - np.asarray(
-            runtime["attach_target_reference"], dtype=np.float64
+        current_jaw_driver = jaw_driver_point(runtime, runtime["current_values"])
+        runtime["attach_driver_newton"] = current_jaw_driver.copy()
+        driver_delta = np.asarray(current_jaw_driver, dtype=np.float64) - np.asarray(
+            runtime["attach_jaw_reference"], dtype=np.float64
         )
-        attached_thread_target = np.asarray(runtime["attach_thread_reference"], dtype=np.float64) + target_delta
+        attached_thread_target = np.asarray(runtime["attach_thread_reference"], dtype=np.float64) + driver_delta
         runtime["thread_state"] = kinematic_drag_thread(
             runtime["drag_reference"],
             runtime["target_idx"],
@@ -431,6 +447,9 @@ def state_message(runtime, seq, sim_time, grip, jaw, perf):
         "target_thread_idx": target_idx,
         "target_newton": runtime["target"].round(7).tolist(),
         "jaw_grasp_newton": jaw_point.round(7).tolist(),
+        "attach_driver_newton": np.asarray(runtime.get("attach_driver_newton", runtime["target"]), dtype=np.float64)
+        .round(7)
+        .tolist(),
         "attach_distance_m": float(runtime.get("snap_distance", 0.0)),
         "snap_distance_m": float(runtime.get("snap_distance", 0.0)),
         "grasp_candidate_distance_m": float(runtime.get("grasp_candidate_distance", float("inf"))),

@@ -239,9 +239,10 @@ def main():
 
         target = np.asarray(latest.get("target_newton", nodes[0]), dtype=np.float64)
         jaw = np.asarray(latest.get("jaw_grasp_newton", nodes[0]), dtype=np.float64)
+        attach_driver = np.asarray(latest.get("attach_driver_newton", jaw), dtype=np.float64)
         robot_meshes = robot_meshes_from_state(robot_context, latest.get("joint_values", {}), args)
         robot_points = np.vstack([mesh[1] for mesh in robot_meshes]) if robot_meshes else np.empty((0, 3))
-        all_points = np.vstack([nodes, target.reshape(1, 3), jaw.reshape(1, 3), robot_points])
+        all_points = np.vstack([nodes, target.reshape(1, 3), jaw.reshape(1, 3), attach_driver.reshape(1, 3), robot_points])
         if not camera_set or not args.fixed_camera:
             pos, pitch, yaw = compute_camera(all_points, args.distance_scale)
             viewer.set_camera(pos=wp.vec3(float(pos[0]), float(pos[1]), float(pos[2])), pitch=float(pitch), yaw=float(yaw))
@@ -251,6 +252,7 @@ def main():
         thread_v, thread_f = tube_mesh(nodes, args.thread_radius, args.thread_sides)
         target_v, target_f = make_sphere_mesh(target, args.point_radius)
         jaw_v, jaw_f = make_sphere_mesh(jaw, args.point_radius)
+        driver_v, driver_f = make_sphere_mesh(attach_driver, args.point_radius * 0.9)
         start_v, start_f = make_sphere_mesh(nodes[0], args.point_radius * 0.8)
         end_v, end_f = make_sphere_mesh(nodes[-1], args.point_radius * 0.8)
 
@@ -259,6 +261,7 @@ def main():
         log_mesh(viewer, wp, "/teleop/thread", thread_v, thread_f, color=(0.86, 0.82, 0.72), roughness=0.55)
         log_mesh(viewer, wp, "/teleop/target", target_v, target_f, color=(1.0, 0.0, 1.0), roughness=0.3)
         log_mesh(viewer, wp, "/teleop/jaw_grasp", jaw_v, jaw_f, color=(0.02, 0.02, 0.02), roughness=0.3)
+        log_mesh(viewer, wp, "/teleop/attach_driver", driver_v, driver_f, color=(0.0, 1.0, 0.25), roughness=0.3)
         log_mesh(viewer, wp, "/teleop/start", start_v, start_f, color=(0.0, 0.9, 1.0), roughness=0.3)
         log_mesh(viewer, wp, "/teleop/end", end_v, end_f, color=(1.0, 0.85, 0.0), roughness=0.3)
         for name, verts, faces in robot_meshes:
