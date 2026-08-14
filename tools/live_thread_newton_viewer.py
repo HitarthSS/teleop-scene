@@ -166,6 +166,9 @@ def main():
     parser.add_argument("--thread-radius", type=float, default=0.0003)
     parser.add_argument("--thread-sides", type=int, default=16)
     parser.add_argument("--point-radius", type=float, default=0.0012)
+    parser.add_argument("--show-capture-zone", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--capture-zone-radius-scale", type=float, default=1.0)
+    parser.add_argument("--capture-zone-min-radius", type=float, default=0.0004)
     parser.add_argument("--distance-scale", type=float, default=2.8)
     parser.add_argument("--fixed-camera", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--camera-speed", type=float, default=0.01)
@@ -240,9 +243,27 @@ def main():
         target = np.asarray(latest.get("target_newton", nodes[0]), dtype=np.float64)
         jaw = np.asarray(latest.get("jaw_grasp_newton", nodes[0]), dtype=np.float64)
         attach_driver = np.asarray(latest.get("attach_driver_newton", jaw), dtype=np.float64)
+        capture_a = np.asarray(latest.get("capture_zone_a_newton", jaw), dtype=np.float64)
+        capture_b = np.asarray(latest.get("capture_zone_b_newton", jaw), dtype=np.float64)
+        capture_radius = max(
+            float(latest.get("capture_zone_radius_m", args.thread_radius)),
+            float(args.capture_zone_min_radius),
+        ) * float(args.capture_zone_radius_scale)
+        capture_valid = (
+            bool(args.show_capture_zone)
+            and capture_a.shape == (3,)
+            and capture_b.shape == (3,)
+            and np.all(np.isfinite(capture_a))
+            and np.all(np.isfinite(capture_b))
+            and float(np.linalg.norm(capture_b - capture_a)) > 1.0e-7
+        )
         robot_meshes = robot_meshes_from_state(robot_context, latest.get("joint_values", {}), args)
         robot_points = np.vstack([mesh[1] for mesh in robot_meshes]) if robot_meshes else np.empty((0, 3))
-        all_points = np.vstack([nodes, target.reshape(1, 3), jaw.reshape(1, 3), attach_driver.reshape(1, 3), robot_points])
+        extra_points = [target.reshape(1, 3), jaw.reshape(1, 3), attach_driver.reshape(1, 3), robot_points]
+        if capture_valid:
+            extra_points.append(capture_a.reshape(1, 3))
+            extra_points.append(capture_b.reshape(1, 3))
+        all_points = np.vstack([nodes, *extra_points])
         if not camera_set or not args.fixed_camera:
             pos, pitch, yaw = compute_camera(all_points, args.distance_scale)
             viewer.set_camera(pos=wp.vec3(float(pos[0]), float(pos[1]), float(pos[2])), pitch=float(pitch), yaw=float(yaw))
@@ -255,10 +276,27 @@ def main():
         driver_v, driver_f = make_sphere_mesh(attach_driver, args.point_radius * 0.9)
         start_v, start_f = make_sphere_mesh(nodes[0], args.point_radius * 0.8)
         end_v, end_f = make_sphere_mesh(nodes[-1], args.point_radius * 0.8)
+        if capture_valid:
+            capture_v, capture_f = tube_mesh(
+                np.vstack([capture_a, capture_b]),
+                capture_radius,
+                max(int(args.thread_sides), 12),
+            )
 
         viewer.begin_frame(float(latest.get("time", now)))
         viewer.log_state(state)
         log_mesh(viewer, wp, "/teleop/thread", thread_v, thread_f, color=(0.86, 0.82, 0.72), roughness=0.55)
+        if capture_valid:
+            capture_color = (1.0, 0.48, 0.02) if bool(latest.get("attached", False)) else (0.0, 0.85, 0.25)
+            log_mesh(
+                viewer,
+                wp,
+                "/teleop/gripper_capture_zone",
+                capture_v,
+                capture_f,
+                color=capture_color,
+                roughness=0.2,
+            )
         log_mesh(viewer, wp, "/teleop/target", target_v, target_f, color=(1.0, 0.0, 1.0), roughness=0.3)
         log_mesh(viewer, wp, "/teleop/jaw_grasp", jaw_v, jaw_f, color=(0.02, 0.02, 0.02), roughness=0.3)
         log_mesh(viewer, wp, "/teleop/attach_driver", driver_v, driver_f, color=(0.0, 1.0, 0.25), roughness=0.3)

@@ -27,7 +27,6 @@ from animate_psm_robot_with_thread_contact import (
     choose_grasp_points,
     jaw_grasp_point_newton,
     jaw_visual_clouds_newton,
-    kinematic_drag_thread,
     solve_ik_to_target,
 )
 from render_frame_scene_with_psm_urdf import (
@@ -100,7 +99,12 @@ def load_scene(args):
         "attach_target_reference": np.asarray(target, dtype=np.float64),
         "attach_jaw_reference": np.asarray(target, dtype=np.float64),
         "attach_thread_reference": np.asarray(target, dtype=np.float64),
+        "attach_segment_index": int(target_idx),
+        "attach_segment_t": 0.0,
         "attach_driver_newton": np.asarray(target, dtype=np.float64),
+        "capture_zone_a": np.asarray(target, dtype=np.float64),
+        "capture_zone_b": np.asarray(target, dtype=np.float64),
+        "capture_zone_radius": max(float(args.grasp_gate_radius), float(args.thread_radius) + float(args.jaw_collision_radius)),
         "snap_distance": 0.0,
         "grasp_candidate_distance": float("inf"),
         "grasp_candidate_aperture_t": 0.0,
@@ -264,6 +268,7 @@ def nearest_thread_segment_to_aperture(thread_state, aperture_a, aperture_b):
         "distance": float("inf"),
         "raw_distance": float("inf"),
         "index": 0,
+        "segment_index": 0,
         "aperture_t": 0.0,
         "thread_t": 0.0,
         "thread_point": thread_state[0].copy(),
@@ -287,16 +292,56 @@ def nearest_thread_segment_to_aperture(thread_state, aperture_a, aperture_b):
                 "distance": score,
                 "raw_distance": float(distance),
                 "index": int(nearest_node),
+                "segment_index": int(i),
                 "aperture_t": float(aperture_t),
                 "thread_t": float(thread_t),
-                "thread_point": thread_state[int(nearest_node)].copy(),
+                "thread_point": np.asarray(thread_point, dtype=np.float64).copy(),
                 "jaw_point": np.asarray(jaw_point, dtype=np.float64).copy(),
             }
     return best
 
 
-def try_attach_thread_inside_open_jaw(runtime, values_gate, values_driver, args):
+def interpolate_thread_point(thread_state, segment_index, segment_t):
+    thread_state = np.asarray(thread_state, dtype=np.float64)
+    if len(thread_state) == 1:
+        return thread_state[0].copy()
+    segment_index = int(np.clip(int(segment_index), 0, len(thread_state) - 2))
+    segment_t = float(np.clip(float(segment_t), 0.0, 1.0))
+    return (1.0 - segment_t) * thread_state[segment_index] + segment_t * thread_state[segment_index + 1]
+
+
+def kinematic_drag_thread_point(thread_initial, segment_index, segment_t, target, attachment_span, falloff_nodes):
+    thread_initial = np.asarray(thread_initial, dtype=np.float64)
+    reference_point = interpolate_thread_point(thread_initial, segment_index, segment_t)
+    delta = np.asarray(target, dtype=np.float64).reshape(3) - reference_point
+    anchor = float(int(segment_index)) + float(np.clip(segment_t, 0.0, 1.0))
+    n = len(thread_initial)
+    positions = thread_initial.copy()
+    falloff = max(float(falloff_nodes), 1.0)
+    locked = max(float(attachment_span), 1.0)
+    for i in range(n):
+        d = abs(float(i) - anchor)
+        if d < locked:
+            weight = 1.0
+        else:
+            weight = float(np.exp(-(d - locked + 1.0) / falloff))
+        positions[i] = thread_initial[i] + weight * delta
+    return positions
+
+
+def update_capture_zone(runtime, values_gate, args):
     aperture_a, aperture_b = jaw_aperture_segment(runtime, values_gate)
+    runtime["capture_zone_a"] = np.asarray(aperture_a, dtype=np.float64).copy()
+    runtime["capture_zone_b"] = np.asarray(aperture_b, dtype=np.float64).copy()
+    runtime["capture_zone_radius"] = max(
+        float(args.grasp_gate_radius),
+        float(args.thread_radius) + float(args.jaw_collision_radius),
+    )
+    return aperture_a, aperture_b
+
+
+def try_attach_thread_inside_open_jaw(runtime, values_gate, values_driver, args):
+    aperture_a, aperture_b = update_capture_zone(runtime, values_gate, args)
     hit = nearest_thread_segment_to_aperture(runtime["thread_state"], aperture_a, aperture_b)
     runtime["grasp_candidate_distance"] = float(hit["raw_distance"])
     runtime["grasp_candidate_aperture_t"] = float(hit["aperture_t"])
@@ -309,10 +354,12 @@ def try_attach_thread_inside_open_jaw(runtime, values_gate, values_driver, args)
 
     runtime["attached"] = True
     runtime["target_idx"] = int(hit["index"])
+    runtime["attach_segment_index"] = int(hit["segment_index"])
+    runtime["attach_segment_t"] = float(hit["thread_t"])
     runtime["drag_reference"] = np.asarray(runtime["thread_state"], dtype=np.float64).copy()
     runtime["attach_target_reference"] = np.asarray(runtime["target"], dtype=np.float64).copy()
     runtime["attach_jaw_reference"] = jaw_driver_point(runtime, values_driver)
-    runtime["attach_thread_reference"] = runtime["drag_reference"][runtime["target_idx"]].copy()
+    runtime["attach_thread_reference"] = np.asarray(hit["thread_point"], dtype=np.float64).copy()
     runtime["attach_driver_newton"] = runtime["attach_jaw_reference"].copy()
     runtime["snap_distance"] = float(hit["raw_distance"])
     return True
@@ -325,6 +372,8 @@ def snap_grasp_to_thread(runtime, query):
     runtime["attach_target_reference"] = np.asarray(runtime["target"], dtype=np.float64).copy()
     runtime["attach_jaw_reference"] = np.asarray(runtime["target"], dtype=np.float64).copy()
     runtime["attach_thread_reference"] = runtime["drag_reference"][idx].copy()
+    runtime["attach_segment_index"] = int(min(idx, max(len(runtime["drag_reference"]) - 2, 0)))
+    runtime["attach_segment_t"] = 0.0 if idx < len(runtime["drag_reference"]) - 1 else 1.0
     runtime["attach_driver_newton"] = runtime["attach_jaw_reference"].copy()
     runtime["snap_distance"] = float(np.linalg.norm(runtime["target"] - np.asarray(query, dtype=np.float64).reshape(3)))
     return idx
@@ -356,7 +405,11 @@ def update_runtime(runtime, command, args):
         runtime["attach_target_reference"] = runtime["target"].copy()
         runtime["attach_jaw_reference"] = runtime["target"].copy()
         runtime["attach_thread_reference"] = runtime["thread_initial"][runtime["target_idx"]].copy()
+        runtime["attach_segment_index"] = int(min(runtime["target_idx"], max(len(runtime["thread_initial"]) - 2, 0)))
+        runtime["attach_segment_t"] = 0.0 if runtime["target_idx"] < len(runtime["thread_initial"]) - 1 else 1.0
         runtime["attach_driver_newton"] = runtime["attach_jaw_reference"].copy()
+        runtime["capture_zone_a"] = runtime["target"].copy()
+        runtime["capture_zone_b"] = runtime["target"].copy()
         runtime["snap_distance"] = 0.0
         runtime["grasp_candidate_distance"] = float("inf")
         runtime["grasp_candidate_aperture_t"] = 0.0
@@ -395,6 +448,7 @@ def update_runtime(runtime, command, args):
     )
     values_gate = apply_jaw(solved_values, runtime["base_values"], args.grasp_gate_jaw_open_fraction, args)
     values_current = apply_jaw(solved_values, runtime["base_values"], jaw, args)
+    update_capture_zone(runtime, values_gate, args)
 
     if not grip:
         runtime["attached"] = False
@@ -416,9 +470,10 @@ def update_runtime(runtime, command, args):
             runtime["attach_jaw_reference"], dtype=np.float64
         )
         attached_thread_target = np.asarray(runtime["attach_thread_reference"], dtype=np.float64) + driver_delta
-        runtime["thread_state"] = kinematic_drag_thread(
+        runtime["thread_state"] = kinematic_drag_thread_point(
             runtime["drag_reference"],
-            runtime["target_idx"],
+            runtime["attach_segment_index"],
+            runtime["attach_segment_t"],
             attached_thread_target,
             args.attachment_span,
             args.drag_falloff_nodes,
@@ -455,6 +510,18 @@ def state_message(runtime, seq, sim_time, grip, jaw, perf):
         "grasp_candidate_distance_m": float(runtime.get("grasp_candidate_distance", float("inf"))),
         "grasp_candidate_aperture_t": float(runtime.get("grasp_candidate_aperture_t", 0.0)),
         "grasp_gate_radius_m": float(runtime.get("grasp_gate_radius", 0.0)),
+        "capture_zone_a_newton": np.asarray(runtime.get("capture_zone_a", runtime["target"]), dtype=np.float64)
+        .round(7)
+        .tolist(),
+        "capture_zone_b_newton": np.asarray(runtime.get("capture_zone_b", runtime["target"]), dtype=np.float64)
+        .round(7)
+        .tolist(),
+        "capture_zone_radius_m": float(runtime.get("capture_zone_radius", runtime.get("grasp_gate_radius", 0.0))),
+        "attach_segment_index": int(runtime.get("attach_segment_index", target_idx)),
+        "attach_segment_t": float(runtime.get("attach_segment_t", 0.0)),
+        "attach_thread_reference_newton": np.asarray(runtime.get("attach_thread_reference", runtime["target"]), dtype=np.float64)
+        .round(7)
+        .tolist(),
         "attached": bool(runtime.get("attached", False)),
         "grip": bool(grip),
         "jaw_open_fraction": float(jaw),
