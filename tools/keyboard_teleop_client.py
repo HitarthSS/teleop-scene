@@ -41,7 +41,11 @@ def draw(stdscr, args, delta, jaw_open, holding, step, state, received):
         candidate = state.get("grasp_candidate_distance_m", float("inf"))
         gate = state.get("grasp_gate_radius_m", 0.0)
         stdscr.addstr(14, 0, f"attached: {state.get('attached', False)}   target displacement: {state.get('target_displacement_m', 0.0):.5f} m")
-        stdscr.addstr(15, 0, f"grasp candidate distance/gate: {candidate:.5f} / {gate:.5f} m")
+        stdscr.addstr(
+            15,
+            0,
+            f"grasp dist/gate: {candidate:.5f} / {gate:.5f} m   aperture_t: {state.get('grasp_candidate_aperture_t', 0.0):.3f}",
+        )
         stdscr.addstr(16, 0, f"server update: {1000.0 * perf.get('update_seconds', 0.0):.3f} ms")
         stdscr.addstr(17, 0, f"target_newton: {state.get('target_newton')}")
         stdscr.addstr(18, 0, f"jaw_grasp_newton: {state.get('jaw_grasp_newton')}")

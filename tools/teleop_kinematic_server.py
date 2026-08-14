@@ -101,6 +101,7 @@ def load_scene(args):
         "attach_thread_reference": np.asarray(target, dtype=np.float64),
         "snap_distance": 0.0,
         "grasp_candidate_distance": float("inf"),
+        "grasp_candidate_aperture_t": 0.0,
         "start_surface_dist": float(start_dist),
         "ik_args": ik_args,
         "ee_link": ee_link,
@@ -183,6 +184,17 @@ def closest_point_on_segment(point, a, b):
     return a + t * ab, t
 
 
+def segment_parameter(point, a, b):
+    point = np.asarray(point, dtype=np.float64).reshape(3)
+    a = np.asarray(a, dtype=np.float64).reshape(3)
+    b = np.asarray(b, dtype=np.float64).reshape(3)
+    ab = b - a
+    denom = float(np.dot(ab, ab))
+    if denom < 1.0e-14:
+        return 0.0
+    return float(np.clip(np.dot(point - a, ab) / denom, 0.0, 1.0))
+
+
 def closest_segment_points(a0, a1, b0, b1):
     """Return closest points between two 3-D segments and their distance."""
     a0 = np.asarray(a0, dtype=np.float64).reshape(3)
@@ -243,22 +255,35 @@ def nearest_thread_segment_to_aperture(thread_state, aperture_a, aperture_b):
     thread_state = np.asarray(thread_state, dtype=np.float64)
     best = {
         "distance": float("inf"),
+        "raw_distance": float("inf"),
         "index": 0,
+        "aperture_t": 0.0,
+        "thread_t": 0.0,
         "thread_point": thread_state[0].copy(),
+        "jaw_point": np.asarray(aperture_a, dtype=np.float64).copy(),
     }
     for i in range(len(thread_state) - 1):
-        thread_point, _jaw_point, distance = closest_segment_points(
+        thread_point, jaw_point, distance = closest_segment_points(
             thread_state[i],
             thread_state[i + 1],
             aperture_a,
             aperture_b,
         )
-        if distance < best["distance"]:
+        aperture_t = segment_parameter(jaw_point, aperture_a, aperture_b)
+        thread_t = segment_parameter(thread_point, thread_state[i], thread_state[i + 1])
+        inside_margin = 0.08
+        outside_penalty = max(0.0, inside_margin - aperture_t, aperture_t - (1.0 - inside_margin))
+        score = float(distance + 0.01 * outside_penalty)
+        if score < best["distance"]:
             nearest_node = i if np.linalg.norm(thread_state[i] - thread_point) <= np.linalg.norm(thread_state[i + 1] - thread_point) else i + 1
             best = {
-                "distance": float(distance),
+                "distance": score,
+                "raw_distance": float(distance),
                 "index": int(nearest_node),
+                "aperture_t": float(aperture_t),
+                "thread_t": float(thread_t),
                 "thread_point": thread_state[int(nearest_node)].copy(),
+                "jaw_point": np.asarray(jaw_point, dtype=np.float64).copy(),
             }
     return best
 
@@ -266,10 +291,13 @@ def nearest_thread_segment_to_aperture(thread_state, aperture_a, aperture_b):
 def try_attach_thread_inside_open_jaw(runtime, values_open, args):
     aperture_a, aperture_b = jaw_aperture_segment(runtime, values_open)
     hit = nearest_thread_segment_to_aperture(runtime["thread_state"], aperture_a, aperture_b)
-    runtime["grasp_candidate_distance"] = float(hit["distance"])
-    if hit["distance"] > float(args.grasp_gate_radius):
+    runtime["grasp_candidate_distance"] = float(hit["raw_distance"])
+    runtime["grasp_candidate_aperture_t"] = float(hit["aperture_t"])
+    latch_radius = max(float(args.grasp_gate_radius), float(args.thread_radius) + float(args.jaw_collision_radius))
+    inside_opening = -float(args.grasp_aperture_margin) <= hit["aperture_t"] <= 1.0 + float(args.grasp_aperture_margin)
+    if hit["raw_distance"] > latch_radius or not inside_opening:
         runtime["attached"] = False
-        runtime["snap_distance"] = float(hit["distance"])
+        runtime["snap_distance"] = float(hit["raw_distance"])
         return False
 
     runtime["attached"] = True
@@ -277,7 +305,7 @@ def try_attach_thread_inside_open_jaw(runtime, values_open, args):
     runtime["drag_reference"] = np.asarray(runtime["thread_state"], dtype=np.float64).copy()
     runtime["attach_target_reference"] = np.asarray(runtime["target"], dtype=np.float64).copy()
     runtime["attach_thread_reference"] = runtime["drag_reference"][runtime["target_idx"]].copy()
-    runtime["snap_distance"] = float(hit["distance"])
+    runtime["snap_distance"] = float(hit["raw_distance"])
     return True
 
 
@@ -318,6 +346,7 @@ def update_runtime(runtime, command, args):
         runtime["attach_thread_reference"] = runtime["thread_initial"][runtime["target_idx"]].copy()
         runtime["snap_distance"] = 0.0
         runtime["grasp_candidate_distance"] = float("inf")
+        runtime["grasp_candidate_aperture_t"] = 0.0
 
     previous_grip = bool(runtime.get("last_grip", False))
     if "target_thread_idx" in command:
@@ -355,11 +384,12 @@ def update_runtime(runtime, command, args):
 
     if not grip:
         runtime["attached"] = False
-    elif (
+    elif not runtime.get("attached") and (
         command.get("attempt_grasp")
         or command.get("snap_selected")
         or command.get("snap_grip")
         or (args.snap_on_grip and not previous_grip)
+        or args.grasp_retry_while_holding
     ):
         try_attach_thread_inside_open_jaw(runtime, values_open, args)
 
@@ -404,6 +434,7 @@ def state_message(runtime, seq, sim_time, grip, jaw, perf):
         "attach_distance_m": float(runtime.get("snap_distance", 0.0)),
         "snap_distance_m": float(runtime.get("snap_distance", 0.0)),
         "grasp_candidate_distance_m": float(runtime.get("grasp_candidate_distance", float("inf"))),
+        "grasp_candidate_aperture_t": float(runtime.get("grasp_candidate_aperture_t", 0.0)),
         "grasp_gate_radius_m": float(runtime.get("grasp_gate_radius", 0.0)),
         "attached": bool(runtime.get("attached", False)),
         "grip": bool(grip),
@@ -434,6 +465,10 @@ def main():
     parser.add_argument("--snap-on-grip", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--grasp-points-per-link", type=int, default=16)
     parser.add_argument("--grasp-gate-radius", type=float, default=0.0015)
+    parser.add_argument("--jaw-collision-radius", type=float, default=0.0012)
+    parser.add_argument("--thread-radius", type=float, default=0.0003)
+    parser.add_argument("--grasp-aperture-margin", type=float, default=0.15)
+    parser.add_argument("--grasp-retry-while-holding", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--grasp-gate-jaw-open-fraction", type=float, default=1.0)
     parser.add_argument("--attachment-span", type=int, default=5)
     parser.add_argument("--drag-falloff-nodes", type=float, default=16.0)

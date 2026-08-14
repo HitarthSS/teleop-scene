@@ -6,7 +6,10 @@ IMAGE="${IMAGE:-thread-reconstruction-newton:latest}"
 DOCKER_GPU_ARGS="${DOCKER_GPU_ARGS:---gpus all}"
 COMMAND_PORT="${COMMAND_PORT:-8765}"
 RATE_HZ="${RATE_HZ:-90}"
-GRASP_GATE_RADIUS="${GRASP_GATE_RADIUS:-0.0015}"
+GRASP_GATE_RADIUS="${GRASP_GATE_RADIUS:-0.003}"
+JAW_COLLISION_RADIUS="${JAW_COLLISION_RADIUS:-0.0012}"
+THREAD_RADIUS="${THREAD_RADIUS:-0.0003}"
+GRASP_APERTURE_MARGIN="${GRASP_APERTURE_MARGIN:-0.15}"
 GRASP_GATE_JAW_OPEN_FRACTION="${GRASP_GATE_JAW_OPEN_FRACTION:-1.0}"
 JAW_OPEN_ANGLE="${JAW_OPEN_ANGLE:-0.75}"
 JAW_CLOSED_ANGLE="${JAW_CLOSED_ANGLE:-0.015}"
@@ -44,6 +47,9 @@ docker run --rm $DOCKER_GPU_ARGS \
     --command-port "$COMMAND_PORT" \
     --rate-hz "$RATE_HZ" \
     --grasp-gate-radius "$GRASP_GATE_RADIUS" \
+    --jaw-collision-radius "$JAW_COLLISION_RADIUS" \
+    --thread-radius "$THREAD_RADIUS" \
+    --grasp-aperture-margin "$GRASP_APERTURE_MARGIN" \
     --grasp-gate-jaw-open-fraction "$GRASP_GATE_JAW_OPEN_FRACTION" \
     --jaw-open-angle "$JAW_OPEN_ANGLE" \
     --jaw-closed-angle "$JAW_CLOSED_ANGLE" \
